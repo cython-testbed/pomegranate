@@ -15,7 +15,6 @@ filenames = [ "base",
               "BayesianNetwork",
               "FactorGraph",
               "distributions",
-              "fsm",
               "hmm",
               "gmm",
               "NaiveBayes",
@@ -45,7 +44,7 @@ class build_ext(_build_ext):
 
 setup(
     name='pomegranate',
-    version='0.7.3',
+    version='0.7.4',
     author='Jacob Schreiber',
     author_email='jmschreiber91@gmail.com',
     packages=['pomegranate'],
@@ -65,5 +64,9 @@ setup(
         "networkx >= 1.8.1",
         "scipy >= 0.17.0"
     ],
-    test_suite = 'nose.collector'
+    test_suite = 'nose.collector',
+    package_data={
+        'pomegranate': ['*.pyd']
+    },
+    include_package_data=True,
 )
