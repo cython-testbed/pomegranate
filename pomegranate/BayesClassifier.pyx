@@ -3,6 +3,7 @@
 # BayesClassifier.pyx
 # Contact: Jacob Schreiber ( jmschreiber91@gmail.com )
 
+import time
 import json
 import numpy
 cimport numpy
@@ -22,16 +23,23 @@ DEF NEGINF = float("-inf")
 DEF INF = float("inf")
 
 cdef class BayesClassifier(BayesModel):
-	"""A Naive Bayes model, a supervised alternative to GMM.
+	"""A Bayes classifier, a more general form of a naive Bayes classifier.
+
+	A Bayes classifier, like a naive Bayes classifier, uses Bayes' rule in
+	order to calculate the posterior probability of the classes, which are
+	used for the predictions. However, a naive Bayes classifier assumes that
+	each of the features are independent of each other and so can be modelled
+	as independent distributions. A generalization of that, the Bayes
+	classifier, allows for an arbitrary covariance between the features. This
+	allows for more complicated components to be used, up to and including
+	even HMMs to form a classifier over sequences, or mixtures to form a
+	classifier with complex emissions.
 
 	Parameters
 	----------
-	models : list or constructor
-		Must either be a list of initialized distribution/model objects, or
-		the constructor for a distribution object:
-
-		* Initialized : NaiveBayes([NormalDistribution(1, 2), NormalDistribution(0, 1)])
-		* Constructor : NaiveBayes(NormalDistribution)
+	models : list
+		A list of initialized distribution objects to use as the components
+		in the model.
 
 	weights : list or numpy.ndarray or None, default None
 		The prior probabilities of the components. If None is passed in then
@@ -48,20 +56,18 @@ cdef class BayesClassifier(BayesModel):
 	Examples
 	--------
 	>>> from pomegranate import *
-	>>> clf = NaiveBayes( NormalDistribution )
-	>>> X = [0, 2, 0, 1, 0, 5, 6, 5, 7, 6]
+	>>>
+	>>> d1 = NormalDistribution(3, 2)
+	>>> d2 = NormalDistribution(5, 1.5)
+	>>>
+	>>> clf = BayesClassifier([d1, d2])
+	>>> clf.predict_proba([[6]])
+	array([[ 0.2331767,  0.7668233]])
+	>>> X = [[0], [2], [0], [1], [0], [5], [6], [5], [7], [6]]
 	>>> y = [0, 0, 0, 0, 0, 1, 1, 0, 1, 1]
 	>>> clf.fit(X, y)
-	>>> clf.predict_proba([6])
+	>>> clf.predict_proba([[6]])
 	array([[ 0.01973451,  0.98026549]])
-
-	>>> from pomegranate import *
-	>>> clf = NaiveBayes([NormalDistribution(1, 2), NormalDistribution(0, 1)])
-	>>> clf.predict_log_proba([[0], [1], [2], [-1]])
-	array([[-1.1836569 , -0.36550972],
-		   [-0.79437677, -0.60122959],
-		   [-0.26751248, -1.4493653 ],
-		   [-1.09861229, -0.40546511]])
 	"""
 
 	def __init__(self, distributions, weights=None):
@@ -70,9 +76,17 @@ cdef class BayesClassifier(BayesModel):
 	def __reduce__(self):
 		return self.__class__, (self.distributions, self.weights)
 
-	def fit(self, X, y, weights=None, n_jobs=1, inertia=0.0, pseudocount=0.0,
-		stop_threshold=0.1, max_iterations=1e8, verbose=False):
-		"""Fit the Naive Bayes model to the data by passing data to their components.
+	def fit(self, X, y, weights=None, inertia=0.0, pseudocount=0.0,
+		stop_threshold=0.1, max_iterations=1e8, verbose=False, n_jobs=1):
+		"""Fit the Bayes classifier to the data by passing data to its components.
+
+		The fit step for a Bayes classifier with purely labeled data is a simple
+		MLE update on the underlying distributions, grouped by the labels. However,
+		in the semi-supervised the model is trained on a mixture of both labeled
+		and unlabeled data, where the unlabeled data uses the label -1. In this
+		setting, EM is used to train the model. The model is initialized using the
+		labeled data and then sufficient statistics are gathered for both the
+		labeled and unlabeled data, combined, and used to update the parameters.
 
 		Parameters
 		----------
@@ -89,10 +103,6 @@ cdef class BayesClassifier(BayesModel):
 			The initial weights of each sample in the matrix. If nothing is
 			passed in then each sample is assumed to be the same weight.
 			Default is None.
-
-		n_jobs : int
-			The number of jobs to use to parallelize, either the number of threads
-			or the number of processes to use. Default is 1.
 
 		inertia : double, optional
 			Inertia used for the training the distributions.
@@ -119,12 +129,17 @@ cdef class BayesClassifier(BayesModel):
 			iterations. Only required if doing semisupervised learning.
 			Default is False.
 
+		n_jobs : int
+			The number of jobs to use to parallelize, either the number of threads
+			or the number of processes to use. Default is 1.
+
 		Returns
 		-------
 		self : object
 			Returns the fitted model
 		"""
 
+		training_start_time = time.time()
 		self.summarize(X, y, weights, n_jobs=n_jobs)
 		self.from_summaries(inertia, pseudocount)
 
@@ -144,6 +159,7 @@ cdef class BayesClassifier(BayesModel):
 			unlabeled_weights = None if weights is None else weights[y == -1]
 
 			while improvement > stop_threshold and iteration < max_iterations + 1:
+				epoch_start_time = time.time()
 				self.from_summaries(inertia, pseudocount)
 				unsupervised.weights[:] = self.weights
 
@@ -158,8 +174,11 @@ cdef class BayesClassifier(BayesModel):
 				else:
 					improvement = log_probability_sum - last_log_probability_sum
 
+					time_spent = time.time() - epoch_start_time
+					vals = dict(iteration=iteration, improvement=improvement, time=time_spent)
+					fmt = "[{iteration}] Improvement: {improvement}\tTime (s): {time:.2f}"
 					if verbose:
-						print("Improvement: {}".format(improvement))
+						print(fmt.format(**vals))
 
 				iteration += 1
 				last_log_probability_sum = log_probability_sum
@@ -167,8 +186,10 @@ cdef class BayesClassifier(BayesModel):
 			self.clear_summaries()
 
 			if verbose:
-				print("Total Improvement: {}".format(
-					last_log_probability_sum - initial_log_probability_sum))
+				total_imp = last_log_probability_sum - initial_log_probability_sum
+				total_time_spent = time.time() - training_start_time
+				print("Total Improvement: {}".format(total_imp))
+				print("Total Time (s): {:.2f}".format(total_time_spent))
 
 			return last_log_probability_sum - initial_log_probability_sum
 
@@ -262,7 +283,8 @@ cdef class BayesClassifier(BayesModel):
 
 	@classmethod
 	def from_samples(self, distributions, X, y, weights=None, 
-		pseudocount=0.0, n_jobs=1):
+		inertia=0.0, pseudocount=0.0, stop_threshold=0.1, max_iterations=1e8, 
+		verbose=False, n_jobs=1):
 		"""Create a mixture model directly from the given dataset.
 
 		First, k-means will be run using the given initializations, in order to
@@ -295,12 +317,35 @@ cdef class BayesClassifier(BayesModel):
 			passed in then each sample is assumed to be the same weight.
 			Default is None.
 
-		pseudocount : double, optional, positive
-            A pseudocount to add to the emission of each distribution. This
-            effectively smoothes the states to prevent 0. probability symbols
-            if they don't happen to occur in the data. Only effects mixture
-            models defined over discrete distributions. Default is 0.
-		
+		inertia : double, optional
+			Inertia used for the training the distributions.
+
+		pseudocount : double, optional
+			A pseudocount to add to the emission of each distribution. This
+			effectively smoothes the states to prevent 0. probability symbols
+			if they don't happen to occur in the data. Default is 0.
+
+		stop_threshold : double, optional, positive
+			The threshold at which EM will terminate for the improvement of
+			the model. If the model does not improve its fit of the data by
+			a log probability of 0.1 then terminate. Only required if doing
+			semisupervised learning. Default is 0.1.
+
+		max_iterations : int, optional, positive
+			The maximum number of iterations to run EM for. If this limit is
+			hit then it will terminate training, regardless of how well the
+			model is improving per iteration. Only required if doing
+			semisupervised learning. Default is 1e8.
+
+		verbose : bool, optional
+			Whether or not to print out improvement information over
+			iterations. Only required if doing semisupervised learning.
+			Default is False.
+
+		n_jobs : int
+			The number of jobs to use to parallelize, either the number of threads
+			or the number of processes to use. Default is 1.
+
 		Returns
 		-------
 		model : NaiveBayes
@@ -326,5 +371,8 @@ cdef class BayesClassifier(BayesModel):
 			distributions = [distribution.blank() for distribution in distributions]
 
 		model = BayesClassifier(distributions)
-		model.fit(X, y, weights=weights, pseudocount=pseudocount, n_jobs=n_jobs)
+		model.fit(X, y, weights=weights, inertia=inertia, pseudocount=pseudocount, 
+			stop_threshold=stop_threshold, max_iterations=max_iterations,
+			verbose=False, n_jobs=n_jobs)
+
 		return model

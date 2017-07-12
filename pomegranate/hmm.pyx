@@ -13,6 +13,7 @@ import math, random, itertools as it, sys, json
 import networkx
 import tempfile
 import warnings
+import time
 
 from .base cimport GraphModel
 from .base cimport Model
@@ -2459,6 +2460,8 @@ cdef class HiddenMarkovModel(GraphModel):
         cdef bint check_input = alg == 'viterbi'
         cdef list X = []
 
+        training_start_time = time.time()
+
         for sequence in sequences:
             sequence_ndarray = _check_input(sequence, self)
             X.append(sequence_ndarray)
@@ -2473,6 +2476,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
         with Parallel(n_jobs=n_jobs, backend='threading') as parallel:
             while improvement > stop_threshold or iteration < min_iterations + 1:
+                epoch_start_time = time.time()
                 self.from_summaries(inertia, pseudocount, transition_pseudocount,
                     emission_pseudocount, use_pseudocount,
                     edge_inertia, distribution_inertia)
@@ -2486,10 +2490,13 @@ cdef class HiddenMarkovModel(GraphModel):
                     initial_log_probability_sum = log_probability_sum
                 else:
                     improvement = log_probability_sum - last_log_probability_sum
+                    time_spent = time.time() - epoch_start_time
+                    vals = dict(iteration=iteration, improvement=improvement, time=time_spent)
+                    fmt = "[{iteration}] Improvement: {improvement}\tTime (s): {time:.2f}"
                     if verbose:
-                        print("Training improvement: {}".format(improvement))
+                        print(fmt.format(**vals))
 
-                iteration +=1
+                iteration += 1
                 last_log_probability_sum = log_probability_sum
 
         self.clear_summaries()
@@ -2503,6 +2510,8 @@ cdef class HiddenMarkovModel(GraphModel):
 
         if verbose:
             print("Total Training Improvement: {}".format(improvement))
+            total_training_time = time.time() - training_start_time
+            print("Total Training Time (s): {0:.2f}".format(total_training_time))
         return improvement
 
     def summarize(self, sequences, weights=None, labels=None, algorithm='baum-welch', 
@@ -3244,19 +3253,19 @@ cdef class HiddenMarkovModel(GraphModel):
             # Connect states to the end of the model if a non-zero probability
             for i, prob in enumerate(ends):
                 if prob != 0:
-                    model.add_transition(states[j], model.end, prob)
+                    model.add_transition(states[i], model.end, prob)
 
         model.bake(verbose=verbose, merge=merge)
         return model
 
     @classmethod
     def from_samples(cls, distribution, n_components, X, weights=None, 
-        labels=None, stop_threshold=1e-9, min_iterations=0, 
-        max_iterations=1e8, algorithm='baum-welch', verbose=False, n_init=1, 
-        init='kmeans++', max_kmeans_iterations=1, pseudocount=None, 
+        labels=None, algorithm='baum-welch', inertia=None, edge_inertia=0.0, 
+        distribution_inertia=0.0, pseudocount=None, 
         transition_pseudocount=0, emission_pseudocount=0.0, 
-        use_pseudocount=False, inertia=None, edge_inertia=0.0, 
-        distribution_inertia=0.0, n_jobs=1):
+        use_pseudocount=False, stop_threshold=1e-9, min_iterations=0, 
+        max_iterations=1e8, n_init=1, init='kmeans++', max_kmeans_iterations=1, 
+        end_state=False, verbose=False, n_jobs=1):
         """Learn the transitions and emissions of a model directly from data.
 
         This method will learn both the transition matrix, emission distributions,
@@ -3299,18 +3308,6 @@ cdef class HiddenMarkovModel(GraphModel):
             n is the number of sequences to train on, and each of those lists
             must have one label per observation. Default is None.
 
-        stop_threshold : double, optional
-            The threshold the improvement ratio of the models log probability
-            in fitting the scores. Default is 1e-9.
-
-        min_iterations : int, optional
-            The minimum number of iterations to run Baum-Welch training for.
-            Default is 0.
-
-        max_iterations : int, optional
-            The maximum number of iterations to run Baum-Welch training for.
-            Default is 1e8.
-
         algorithm : 'baum-welch', 'viterbi', 'labeled'
             The training algorithm to use. Baum-Welch uses the forward-backward
             algorithm to train using a version of structured EM. Viterbi
@@ -3319,9 +3316,18 @@ cdef class HiddenMarkovModel(GraphModel):
             Default is 'baum-welch'. Labeled training requires that labels
             are provided for each observation in each sequence.
 
-        verbose : bool, optional
-            Whether to print the improvement in the model fitting at each
-            iteration. Default is True.
+        inertia : double or None, optional, range [0, 1]
+            If double, will set both edge_inertia and distribution_inertia to
+            be that value. If None, will not override those values. Default is
+            None.
+
+        edge_inertia : bool, optional, range [0, 1]
+            Whether to use inertia when updating the transition probability
+            parameters. Default is 0.0.
+
+        distribution_inertia : double, optional, range [0, 1]
+            Whether to use inertia when updating the distribution parameters.
+            Default is 0.0.
 
         pseudocount : double, optional
             A pseudocount to add to both transitions and emissions. If supplied,
@@ -3346,18 +3352,36 @@ cdef class HiddenMarkovModel(GraphModel):
             and `emission_pseudocount` parameters, but can be used in addition
             to them. Default is False.
 
-        inertia : double or None, optional, range [0, 1]
-            If double, will set both edge_inertia and distribution_inertia to
-            be that value. If None, will not override those values. Default is
-            None.
+        stop_threshold : double, optional
+            The threshold the improvement ratio of the models log probability
+            in fitting the scores. Default is 1e-9.
 
-        edge_inertia : bool, optional, range [0, 1]
-            Whether to use inertia when updating the transition probability
-            parameters. Default is 0.0.
+        min_iterations : int, optional
+            The minimum number of iterations to run Baum-Welch training for.
+            Default is 0.
 
-        distribution_inertia : double, optional, range [0, 1]
-            Whether to use inertia when updating the distribution parameters.
-            Default is 0.0.
+        max_iterations : int, optional
+            The maximum number of iterations to run Baum-Welch training for.
+            Default is 1e8.
+
+        n_init : int, optional
+            The number of times to initialize the k-means clustering before
+            taking the best value. Default is 1.
+
+        init : str, optional
+            The initialization method for kmeans. Must be one of 'first-k',
+            'random', 'kmeans++', or 'kmeans||'. Default is kmeans++.
+
+        max_kmeans_iterations : int, optional
+            The number of iterations to run k-means for before starting EM.
+
+        end_state : bool, optional
+            Whether to calculate the probability of ending in each state or not.
+            Default is False. 
+
+        verbose : bool, optional
+            Whether to print the improvement in the model fitting at each
+            iteration. Default is True.
 
         n_jobs : int, optional
             The number of threads to use when performing training. This
@@ -3390,13 +3414,15 @@ cdef class HiddenMarkovModel(GraphModel):
             y = clf.predict(X_concat)
 
             distributions = [distribution.from_samples(X_concat[y == i]) for i in range(n_components)]
-        
+
         transition_matrix = numpy.ones((n_components, n_components)) / n_components
         start_probabilities = numpy.ones(n_components) / n_components
-        model = HiddenMarkovModel.from_matrix(transition_matrix, distributions, start_probabilities)
-
+        end_probabilities = None
+        if end_state:
+            end_probabilities = numpy.ones(n_components) / n_components
+        model = HiddenMarkovModel.from_matrix(transition_matrix, distributions, start_probabilities, ends=end_probabilities)
         model.fit(X, weights, labels, stop_threshold, min_iterations,
-            max_iterations, algorithm, verbose, pseudocount, 
+            max_iterations, algorithm, verbose, pseudocount,
             transition_pseudocount, emission_pseudocount, use_pseudocount,
             inertia, edge_inertia, distribution_inertia, n_jobs)
 
