@@ -130,10 +130,10 @@ cdef class GeneralMixtureModel(BayesModel):
 			Default is 0.0.
 
 		pseudocount : double, optional, positive
-            A pseudocount to add to the emission of each distribution. This
-            effectively smoothes the states to prevent 0. probability symbols
-            if they don't happen to occur in the data. Only effects mixture
-            models defined over discrete distributions. Default is 0.
+			A pseudocount to add to the emission of each distribution. This
+			effectively smoothes the states to prevent 0. probability symbols
+			if they don't happen to occur in the data. Only effects mixture
+			models defined over discrete distributions. Default is 0.
 
 		stop_threshold : double, optional, positive
 			The threshold at which EM will terminate for the improvement of
@@ -312,7 +312,8 @@ cdef class GeneralMixtureModel(BayesModel):
 			X_ptr = <double*> X_ndarray.data
 
 			with nogil:
-				log_probability = self._summarize(X_ptr, weights_ptr, n)
+				log_probability = self._summarize(X_ptr, weights_ptr, n,
+					0, self.d)
 
 		else:
 			log_probability = 0.0
@@ -321,11 +322,13 @@ cdef class GeneralMixtureModel(BayesModel):
 				X_ptr = <double*> X_ndarray.data
 				d = len(X_ndarray)
 				with nogil:
-					log_probability += self._summarize(X_ptr, weights_ptr+i, d)
+					log_probability += self._summarize(X_ptr, weights_ptr+i, 
+						d, 0, self.d)
 
 		return log_probability
 
-	cdef double _summarize(self, double* X, double* weights, int n) nogil:
+	cdef double _summarize(self, double* X, double* weights, int n,
+		int column_idx, int d) nogil:
 		cdef double* r = <double*> calloc(self.n*n, sizeof(double))
 		cdef double* summaries = <double*> calloc(self.n, sizeof(double))
 		cdef int i, j
@@ -356,7 +359,8 @@ cdef class GeneralMixtureModel(BayesModel):
 				break
 
 		for j in range(self.n):
-			(<Model> self.distributions_ptr[j])._summarize(X, r+j*n, n)
+			(<Model> self.distributions_ptr[j])._summarize(X, r+j*n, n,
+				0, d)
 
 		with gil:
 			for j in range(self.n):
@@ -446,10 +450,10 @@ cdef class GeneralMixtureModel(BayesModel):
 			inertia of 1 means ignore the new parameters. Default is 0.0.
 
 		pseudocount : double, optional, positive
-            A pseudocount to add to the emission of each distribution. This
-            effectively smoothes the states to prevent 0. probability symbols
-            if they don't happen to occur in the data. Only effects mixture
-            models defined over discrete distributions. Default is 0.
+			A pseudocount to add to the emission of each distribution. This
+			effectively smoothes the states to prevent 0. probability symbols
+			if they don't happen to occur in the data. Only effects mixture
+			models defined over discrete distributions. Default is 0.
 
 		stop_threshold : double, optional, positive
 			The threshold at which EM will terminate for the improvement of
@@ -520,17 +524,17 @@ cdef class GeneralMixtureModel(BayesModel):
 
 		n, d = X.shape
 
-		batch_size = batch_size or len(X)
-		X_init = X[:batch_size]
+		kmeans_batch_size = batch_size or len(X)
+		X_kmeans = X[:batch_size]
 
 		kmeans = Kmeans(n_components, init=init, n_init=n_init)
-		kmeans.fit(X_init, weights=weights, max_iterations=max_kmeans_iterations,
-			batch_size=batch_size, batches_per_epoch=batches_per_epoch,
+		kmeans.fit(X_kmeans, weights=weights, max_iterations=max_kmeans_iterations,
+			batch_size=kmeans_batch_size, batches_per_epoch=batches_per_epoch,
 			n_jobs=n_jobs)
 
-		y = kmeans.predict(X_init)
+		y = kmeans.predict(X_kmeans)
 
-		distributions = [distribution.from_samples(X_init[y == i]) for i, distribution in enumerate(distributions)]
+		distributions = [distribution.from_samples(X_kmeans[y == i]) for i, distribution in enumerate(distributions)]
 		class_weights = numpy.array([(y == i).mean() for i in range(n_components)])
 
 		model = GeneralMixtureModel(distributions, class_weights)

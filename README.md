@@ -4,6 +4,8 @@
 
 *NOTE: pomegranate does not yet work with networkx 2.0. If you have problems, please downgrade networkx and try again.*
 
+A preprint of the pomegranate paper can be [found here](https://arxiv.org/pdf/1711.00137.pdf). Please consider citing it if you used it in your academic work.
+
 pomegranate is a package for probabilistic and graphical models for Python, implemented in cython for speed. It grew out of the [YAHMM](https://github.com/jmschrei/yahmm) package, where many of the components used could be rearranged to do other cool things. It currently supports:
 
 * Probability Distributions
@@ -40,9 +42,29 @@ To run the tests, you also must have `nose` installed.
 
 ### User Installation
 
-pomegranate is now pip installable! Install using `pip install pomegranate`. pomegranate can also be installed with conda, using `conda install pomegranate`. Wheels have been built for Windows versions for quick installations without the need for a C++ compiler. **NOTE: If you are on OSX and python 2.7 you may encounter an error using pip on versions above 0.7.3. Please install those versions from GitHub or use 0.7.3.**
+pomegranate is now pip installable! Install using 
+
+```
+pip install pomegranate
+```
+
+Pomegranate can also be installed with conda, using 
+
+```
+conda install pomegranate
+``` 
+
+Wheels have been built for Windows versions for quick installations without the need for a C++ compiler. 
+
+**NOTE: If you are on OSX and python 2.7 you may encounter an error using pip on versions above 0.7.3. Please install those versions from GitHub or use 0.7.3.**
 
 You can get the bleeding edge from GitHub using the following:
+
+```
+pip install git+https://github.com/jmschrei/pomegranate.git
+```
+
+Or:
 
 ```
 git clone https://github.com/jmschrei/pomegranate.git
