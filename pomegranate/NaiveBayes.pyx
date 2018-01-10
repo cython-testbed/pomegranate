@@ -117,7 +117,7 @@ cdef class NaiveBayes(BayesModel):
 		are missing, the model will be trained using EM in a semi-supervised
 		setting. 
 
-		A homogenous model can be defined by passing in a single distribution
+		A homogeneous model can be defined by passing in a single distribution
 		callable as the first parameter and specifying the number of components,
 		while a heterogeneous model can be defined by passing in a list of
 		callables of the appropriate type.
@@ -204,7 +204,10 @@ cdef class NaiveBayes(BayesModel):
 			else:
 				distributions = [distributions.blank() for i in range(n_components)]
 		else:
-			distributions = [ICD([distribution.blank() for distribution in distributions]) for i in range(n_components)]
+			if d > 1:
+				distributions = [ICD([distribution.blank() for distribution in distributions]) for i in range(n_components)]
+			else:
+				distributions = [distribution.blank() for distribution in distributions]
 
 		model = NaiveBayes(distributions)
 		model.fit(X, y, weights=weights, pseudocount=pseudocount,

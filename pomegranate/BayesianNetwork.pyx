@@ -20,6 +20,7 @@ from libc.string cimport memset
 from .base cimport GraphModel
 from .base cimport Model
 from .base cimport State
+from .distributions import Distribution
 from .distributions cimport MultivariateDistribution
 from .distributions cimport DiscreteDistribution
 from .distributions cimport ConditionalProbabilityTable
@@ -27,6 +28,7 @@ from .distributions cimport JointProbabilityTable
 from .FactorGraph import FactorGraph
 from .utils cimport _log
 from .utils cimport lgamma
+from .utils cimport isnan
 from .utils import PriorityQueue
 from .utils import plot_networkx
 from .utils import parallelize_function
@@ -50,7 +52,116 @@ else:
 DEF INF = float("inf")
 DEF NEGINF = float("-inf")
 
-cdef class BayesianNetwork( GraphModel ):
+nan = numpy.nan
+
+def _check_nan(X):
+	if isinstance(X, str):
+		if X == 'nan':
+			return True
+		return False
+
+	if X is None or numpy.isnan(X):
+		return True
+	return False
+
+def _check_input(X, model):
+	"""Ensure that the keys in the sample are valid keys.
+
+	Go through each variable in the sample and make sure that the observed
+	symbol is a valid key according to the model. Raise an error if the
+	symbol is not a key valid key according to the model.
+
+	Parameters
+	----------
+	X : dict or array-like 
+		The observed sample.
+
+	states : list
+		A list of states ordered by the columns in the sample.
+
+	Returns
+	-------
+	None
+	"""
+
+	indices = {state.name: state.distribution for state in model.states}
+
+	if isinstance(X, dict):
+		for name, value in X.items():
+			if isinstance(value, Distribution):
+				if set(value.keys()) != set(indices[name].keys()):
+					raise ValueError("State '{}' does not match with keys provided."
+						.format(name))
+				continue
+			
+			if name not in indices:
+				raise ValueError("Model does not contain a state named '{}'"
+					.format(name))
+
+			if value not in indices[name].keys():
+				raise ValueError("State '{}' does not have key '{}'"
+					.format(name, value))
+
+	elif isinstance(X, (numpy.ndarray, list)) and isinstance(X[0], dict):
+		for x in X:
+			for name, value in x.items():
+				if isinstance(value, Distribution):
+					if set(value.keys()) != set(indices[name].keys()):
+						raise ValueError("State '{}' does not match with keys provided."
+							.format(name))
+					continue
+				
+				if name not in indices:
+					raise ValueError("Model does not contain a state named '{}'"
+						.format(name))
+
+				if value not in indices[name].keys():
+					raise ValueError("State '{}' does not have key '{}'"
+						.format(name, value))
+
+	elif isinstance(X, (numpy.ndarray, list)) and isinstance(X[0], (numpy.ndarray, list)):
+		for x in X:
+			if len(x) != len(indices):
+				raise ValueError("Sample does not have the same number of dimensions" +
+					" as the model {} {}".format(x, len(indices)))
+
+			for i in range(len(x)):
+				if isinstance(x[i], Distribution):
+					if set(x[i].keys()) != set(model.states[i].distribution.keys()):
+						raise ValueError("State '{}' does not match with keys provided."
+							.format(model.states[i].name))
+					continue
+
+				if _check_nan(x[i]):
+					continue
+
+				if x[i] not in model.states[i].distribution.keys():
+					raise ValueError("State '{}' does not have key '{}'"
+						.format(model.states[i].name, x[i]))
+
+	else:
+		if len(X) != len(indices):
+			raise ValueError("Sample does not have the same number of dimensions" +
+				" as the model")
+
+		for i in range(len(X)):
+			if isinstance(X[i], Distribution):
+				if set(X[i].keys()) != set(model.states[i].distribution.keys()):
+					raise ValueError("State '{}' does not match with keys provided."
+						.format(model.states[i].name))
+				continue
+
+			if _check_nan(X[i]):
+				continue
+
+			if X[i] not in model.states[i].distribution.keys():
+				raise ValueError("State '{}' does not have key '{}'"
+					.format(model.states[i].name, X[i]))
+
+	return True
+
+
+cdef class BayesianNetwork(GraphModel):
 	"""A Bayesian Network Model.
 
 	A Bayesian network is a directed graph where nodes represent variables, edges
@@ -379,7 +490,7 @@ cdef class BayesianNetwork( GraphModel ):
 	def marginal(self):
 		"""Return the marginal probabilities of each variable in the graph.
 
-		This is equivalent to a pass of belief propogation on a graph where
+		This is equivalent to a pass of belief propagation on a graph where
 		no data has been given. This will calculate the probability of each
 		variable being in each possible emission when nothing is known.
 
@@ -399,7 +510,7 @@ cdef class BayesianNetwork( GraphModel ):
 
 		return self.graph.marginal()
 
-	def predict(self, X, max_iterations=100, n_jobs=1):
+	def predict(self, X, max_iterations=100, check_input=True, n_jobs=1):
 		"""Predict missing values of a data matrix using MLE.
 
 		Impute the missing values of a data matrix using the maximally likely
@@ -415,8 +526,13 @@ cdef class BayesianNetwork( GraphModel ):
 			maximally likely ones.
 
 		max_iterations : int, optional
-			Number of iterations to run loopy belief propogation for. Default
+			Number of iterations to run loopy belief propagation for. Default
 			is 100.
+
+		check_input : bool, optional
+			Check to make sure that the observed symbol is a valid symbol for that
+			distribution to produce. Default is True.
+
 
 		n_jobs : int
 			The number of jobs to use to parallelize, either the number of threads
@@ -425,79 +541,60 @@ cdef class BayesianNetwork( GraphModel ):
 
 		Returns
 		-------
-		X : numpy.ndarray, shape (n_samples, n_nodes)
+		y_hat : numpy.ndarray, shape (n_samples, n_nodes)
 			This is the data matrix with the missing values imputed.
 		"""
 
 		if self.d == 0:
 			raise ValueError("must bake model before using impute")
 
-		if n_jobs > 1:
-			starts = [int(i*len(X)/n_jobs) for i in range(n_jobs)]
-			ends = [int(i*len(X)/n_jobs) for i in range(1, n_jobs+1)]
+		y_hat = self.predict_proba(X, max_iterations=max_iterations,
+			check_input=check_input, n_jobs=n_jobs)
 
-			fn = '.pomegranate.tmp'
-			with open(fn, 'w') as outfile:
-				outfile.write(self.to_json())
+		for i in range(len(y_hat)):
+			for j in range(len(y_hat[i])):
+				if isinstance(y_hat[i][j], Distribution):
+					y_hat[i][j] = y_hat[i][j].mle()
 
-			with Parallel(n_jobs=n_jobs) as parallel:
-				logp_arrays = parallel(delayed(parallelize_function)(
-					X[start:end], BayesianNetwork, 'predict', fn) 
-					for start, end in zip(starts, ends))
+		return y_hat
 
-			os.remove(fn)
-			return numpy.concatenate(logp_arrays)
-
-		X_imp = numpy.copy(X)
-		for i in range(len(X)):
-			obs = {}
-
-			for j, state in enumerate(self.states):
-				item = X[i][j]
-
-				if item is None:
-					continue
-				if isinstance(item, float) and numpy.isnan(item):
-					continue
-				obs[state.name] = item
-
-			imputation = self.predict_proba(obs, max_iterations)
-
-			for j in range(len(self.states)):
-				X_imp[i][j] = imputation[j].mle()
-
-		return X_imp
-
-	def predict_proba(self, data={}, max_iterations=100, check_input=True):
+	def predict_proba(self, X, max_iterations=100, check_input=True, n_jobs=1):
 		"""Returns the probabilities of each variable in the graph given evidence.
 
 		This calculates the marginal probability distributions for each state given
-		the evidence provided through loopy belief propogation. Loopy belief
-		propogation is an approximate algorithm which is exact for certain graph
+		the evidence provided through loopy belief propagation. Loopy belief
+		propagation is an approximate algorithm which is exact for certain graph
 		structures.
 
 		Parameters
 		----------
-		data : dict or array-like, shape <= n_nodes, optional
+		X : dict or array-like, shape <= n_nodes
 			The evidence supplied to the graph. This can either be a dictionary
 			with keys being state names and values being the observed values
 			(either the emissions or a distribution over the emissions) or an
 			array with the values being ordered according to the nodes incorporation
 			in the graph (the order fed into .add_states/add_nodes) and None for
-			variables which are unknown. If nothing is fed in then calculate the
-			marginal of the graph. Default is {}.
+			variables which are unknown. It can also be vectorized, so a list of
+			dictionaries can be passed in where each dictionary is a single sample,
+			or a list of lists where each list is a single sample, both formatted
+			as mentioned before.
 
 		max_iterations : int, optional
-			The number of iterations with which to do loopy belief propogation.
+			The number of iterations with which to do loopy belief propagation.
 			Usually requires only 1. Default is 100.
 
 		check_input : bool, optional
 			Check to make sure that the observed symbol is a valid symbol for that
 			distribution to produce. Default is True.
 
+		n_jobs : int, optional
+			The number of threads to use when parallelizing the job. This
+			parameter is passed directly into joblib. Default is 1, indicating
+			no parallelism.
+
 		Returns
 		-------
-		probabilities : array-like, shape (n_nodes)
+		y_hat : array-like, shape (n_samples, n_nodes)
 			An array of univariate distribution objects showing the probabilities
 			of each variable.
 		"""
@@ -506,13 +603,48 @@ cdef class BayesianNetwork( GraphModel ):
 			raise ValueError("must bake model before using forward-backward algorithm")
 
 		if check_input:
-			indices = { state.name: state.distribution for state in self.states }
+			_check_input(X, self)
 
-			for key, value in data.items():
-				if value not in indices[key].keys() and not isinstance( value, DiscreteDistribution ):
-					raise ValueError( "State '{}' does not have key '{}'".format( key, value ) )
+		if isinstance(X, dict):
+			return self.graph.predict_proba(X, max_iterations)
 
-		return self.graph.predict_proba( data, max_iterations )
+		elif isinstance(X, (list, numpy.ndarray)) and not isinstance(X[0], 
+			(list, numpy.ndarray, dict)):
+			
+			data = {}
+			for state, val in zip(self.states, X):
+				if not _check_nan(val):
+					data[state.name] = val
+
+			return self.graph.predict_proba(data, max_iterations)
+
+		else:
+			if n_jobs > 1:
+				starts = [int(i*len(X)/n_jobs) for i in range(n_jobs)]
+				ends = [int(i*len(X)/n_jobs) for i in range(1, n_jobs+1)]
+
+				fn = '.pomegranate.tmp'
+				with open(fn, 'w') as outfile:
+					outfile.write(self.to_json())
+
+				with Parallel(n_jobs=n_jobs) as parallel:
+					y_hat = parallel(delayed(parallelize_function)(
+						X[start:end], BayesianNetwork, 'predict_proba', fn,
+						check_input=False) 
+						for start, end in zip(starts, ends))
+
+				os.remove(fn)
+				return numpy.concatenate(y_hat)
+
+			else:
+				y_hat = []
+				for x in X:
+					y_ = self.predict_proba(x, max_iterations=max_iterations, 
+						check_input=False, n_jobs=1)
+					y_hat.append(y_)
+
+				return y_hat
+
 
 	def fit(self, X, weights=None, inertia=0.0, pseudocount=0.0, verbose=False, 
 		n_jobs=1):
@@ -622,7 +754,10 @@ cdef class BayesianNetwork( GraphModel ):
 
 		for i in range(n):
 			for j in range(d):
-				X_int[i, j] = self.keymap[j][X[i][j]]
+				if X[i][j] == 'nan' or X[i][j] == None or X[i][j] == nan:
+					X_int[i, j] = nan
+				else:
+					X_int[i, j] = self.keymap[j][X[i][j]]
 
 		if weights is None:
 			weights_ndarray = numpy.ones(n, dtype='float64')
@@ -669,16 +804,13 @@ cdef class BayesianNetwork( GraphModel ):
 
 		self.bake()
 
-	def impute(self, *args, **kwargs):
-		raise Warning("method 'impute' has been depricated, please use 'predict' instead")
-
 	def to_json(self, separators=(',', ' : '), indent=4):
 		"""Serialize the model to a JSON.
 
 		Parameters
 		----------
 		separators : tuple, optional
-			The two separaters to pass to the json.dumps function for formatting.
+			The two separators to pass to the json.dumps function for formatting.
 
 		indent : int, optional
 			The indentation to use at each level. Passed to json.dumps for
@@ -789,7 +921,7 @@ cdef class BayesianNetwork( GraphModel ):
 
 		Returns
 		-------
-		model : BayesianNetwoork
+		model : BayesianNetwork
 			A Bayesian network with the specified structure.
 		"""
 
@@ -926,8 +1058,21 @@ cdef class BayesianNetwork( GraphModel ):
 		X = numpy.array(X)
 		n, d = X.shape
 
-		keys = [numpy.unique(X[:,i]) for i in range(X.shape[1])]
-		keymap = numpy.array([{key: i for i, key in enumerate(keys[j])} for j in range(X.shape[1])])
+		keys = [numpy.unique(X[:,i]) for i in range(d)]
+
+		for i in range(d):
+			keys_ = []
+			for key in keys[i]:
+				if isinstance(key, str) and key == 'nan':
+					continue
+				elif numpy.isnan(key):
+					continue
+				
+				keys_.append(key)
+
+			keys[i] = keys_
+
+		keymap = numpy.array([{key: i for i, key in enumerate(keys[j])} for j in range(d)])
 		key_count = numpy.array([len(keymap[i]) for i in range(d)], dtype='int32')
 
 		if weights is None:
@@ -949,10 +1094,13 @@ cdef class BayesianNetwork( GraphModel ):
 			X = numpy.array(list(X_count.keys()))
 			n, d = X.shape
 
-		X_int = numpy.zeros((n, d), dtype='int32')
+		X_int = numpy.zeros((n, d), dtype='float64')
 		for i in range(n):
 			for j in range(d):
-				X_int[i, j] = keymap[j][X[i, j]]
+				if X[i, j] == 'nan' or isnan(X[i, j]):
+					X_int[i, j] = nan
+				else:
+					X_int[i, j] = keymap[j][X[i, j]]
 
 		w_sum = weights.sum()
 
@@ -960,6 +1108,9 @@ cdef class BayesianNetwork( GraphModel ):
 			max_parents = int(_log(2*w_sum / _log(w_sum)))
 
 		if algorithm == 'chow-liu':
+			if numpy.any(numpy.isnan(X_int)):
+				raise ValueError("Chow-Liu tree learning does not current support missing values")
+
 			structure = discrete_chow_liu_tree(X_int, weights, key_count,
 				pseudocount, root)
 		elif algorithm == 'exact' and constraint_graph is not None:
@@ -1058,7 +1209,7 @@ cdef class ParentGraph(object):
 	def calculate_value(self, value):
 		cdef int k, parent, l = len(value)
 
-		cdef int* X = <int*> self.X.data
+		cdef double* X = <double*> self.X.data
 		cdef int* key_count = <int*> self.key_count.data
 		cdef int* m = self.m
 		cdef int* parents = self.parents
@@ -1108,7 +1259,7 @@ def discrete_chow_liu_tree(numpy.ndarray X_ndarray, numpy.ndarray weights_ndarra
 	cdef int n = X_ndarray.shape[0], d = X_ndarray.shape[1]
 	cdef int max_keys = key_count_ndarray.max()
 
-	cdef int* X = <int*> X_ndarray.data
+	cdef double* X = <double*> X_ndarray.data
 	cdef double* weights = <double*> weights_ndarray.data
 	cdef int* key_count = <int*> key_count_ndarray.data
 
@@ -1135,8 +1286,8 @@ def discrete_chow_liu_tree(numpy.ndarray X_ndarray, numpy.ndarray weights_ndarra
 					joint_count[i*max_keys + l] = pseudocount
 
 			for i in range(n):
-				Xj = X[i*d + j]
-				Xk = X[i*d + k]
+				Xj = <int> X[i*d + j]
+				Xk = <int> X[i*d + k]
 
 				joint_count[Xj * lk + Xk] += weights[i]
 				marg_j[Xj] += weights[i]
@@ -1270,7 +1421,7 @@ def discrete_exact_with_constraints_task(numpy.ndarray X, numpy.ndarray weights,
 	numpy.ndarray key_count, double pseudocount, int max_parents, tuple task,
 	int n_jobs):
 	"""
-	This is a wrapper for the function to be parallelzied by joblib.
+	This is a wrapper for the function to be parallelized by joblib.
 
 	This function takes in a single task as an id and a set of parents and
 	children and calls the appropriate function. This is mostly a wrapper for
@@ -1848,11 +1999,10 @@ def generate_parent_graph(numpy.ndarray X_ndarray,
 		The parents for each variable in this SCC
 	"""
 
-
 	cdef int j, k, variable, l
 	cdef int n = X_ndarray.shape[0], d = X_ndarray.shape[1]
 
-	cdef int* X = <int*> X_ndarray.data
+	cdef double* X = <double*> X_ndarray.data
 	cdef int* key_count = <int*> key_count_ndarray.data
 	cdef int* m = <int*> calloc(d+2, sizeof(int))
 	cdef int* parents = <int*> calloc(d, sizeof(int))
@@ -1901,52 +2051,13 @@ def generate_parent_graph(numpy.ndarray X_ndarray,
 	free(parents)
 	return parent_graph
 
-cdef double discrete_score_node(int* X, double* weights, int* m, int* parents, 
-	int n, int d, int l, double pseudocount) nogil:
-	cdef int i, j, k, idx
-	cdef double w_sum = 0
-	cdef double logp = 0 #-_log(n) / 2 * m[d+1]
-	cdef double count, marginal_count
-	cdef double* counts = <double*> calloc(m[d], sizeof(double))
-	cdef double* marginal_counts = <double*> calloc(m[d-1], sizeof(double))
-
-	memset(counts, 0, m[d]*sizeof(double))
-	memset(marginal_counts, 0, m[d-1]*sizeof(double))
-
-	for i in range(n):
-		idx = 0
-		for j in range(d-1):
-			k = parents[j]
-			idx += X[i*l+k] * m[j]
-
-		marginal_counts[idx] += weights[i]
-		k = parents[d-1]
-		idx += X[i*l+k] * m[d-1]
-
-		counts[idx] += weights[i]
-
-	for i in range(m[d]):
-		w_sum += counts[i]
-		count = pseudocount + counts[i]
-		marginal_count = pseudocount * (m[d] / m[d-1]) + marginal_counts[i%m[d-1]]
-
-		if count > 0:
-			logp += count * _log(count / marginal_count)
-
-	logp -= _log(w_sum) / 2 * m[d+1]
-
-	free(counts)
-	free(marginal_counts)
-	return logp
-
-
 cdef discrete_find_best_parents(numpy.ndarray X_ndarray,
 	numpy.ndarray weights_ndarray, numpy.ndarray key_count_ndarray,
 	double pseudocount, int max_parents, tuple parent_set, int i):
 	cdef int j, k
 	cdef int n = X_ndarray.shape[0], l = X_ndarray.shape[1]
 
-	cdef int* X = <int*> X_ndarray.data
+	cdef double* X = <double*> X_ndarray.data
 	cdef int* key_count = <int*> key_count_ndarray.data
 	cdef int* m = <int*> calloc(l+2, sizeof(int))
 	cdef int* combs = <int*> calloc(l, sizeof(int))
@@ -1978,3 +2089,48 @@ cdef discrete_find_best_parents(numpy.ndarray X_ndarray,
 	free(m)
 	free(combs)
 	return best_score, best_parents
+
+cdef double discrete_score_node(double* X, double* weights, int* m, int* parents, 
+	int n, int d, int l, double pseudocount) nogil:
+	cdef int i, j, k, idx, is_na
+	cdef double w_sum = 0
+	cdef double logp = 0
+	cdef double count, marginal_count
+	cdef double* counts = <double*> calloc(m[d], sizeof(double))
+	cdef double* marginal_counts = <double*> calloc(m[d-1], sizeof(double))
+
+	memset(counts, 0, m[d]*sizeof(double))
+	memset(marginal_counts, 0, m[d-1]*sizeof(double))
+
+	for i in range(n):
+		idx, is_na = 0, 0
+		for j in range(d-1):
+			k = parents[j]
+			if isnan(X[i*l + k]):
+				is_na = 1
+			else:
+				idx += <int> X[i*l+k] * m[j]
+
+		k = parents[d-1]
+		
+		if is_na == 1 or isnan(X[i*l+k]):
+			continue
+
+
+		marginal_counts[idx] += weights[i]
+		idx += <int> X[i*l+k] * m[d-1]
+		counts[idx] += weights[i]
+
+	for i in range(m[d]):
+		w_sum += counts[i]
+		count = pseudocount + counts[i]
+		marginal_count = pseudocount * (m[d] / m[d-1]) + marginal_counts[i%m[d-1]]
+
+		if count > 0:
+			logp += count * _log(count / marginal_count)
+
+	logp -= _log(w_sum) / 2 * m[d+1]
+
+	free(counts)
+	free(marginal_counts)
+	return logp

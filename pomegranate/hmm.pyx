@@ -61,24 +61,40 @@ def _check_input(sequence, model):
 
     if not model.discrete:
         sequence_ndarray = numpy.array(sequence, dtype=numpy.float64)
+
     elif model.multivariate and model.discrete:
         sequence_ndarray = numpy.empty((n, model.d), dtype=numpy.float64)
+
         for i in range(n):
             for j in range(model.d):
-                if model.keymap[j] is {}:
-                    sequence_ndarray[i, j] = sequence[i][j]
+                symbol = sequence[i][j]
+                keymap = model.keymap[j]
+
+                if isinstance(symbol, str) and symbol == 'nan':
+                    sequence_ndarray[i, j] = numpy.nan
+                elif isinstance(symbol, (int, float)) and numpy.isnan(symbol):
+                    sequence_ndarray[i, j] = numpy.nan
+                elif symbol in keymap:
+                    sequence_ndarray[i, j] = keymap[symbol]
                 else:
-                    try:
-                        sequence_ndarray[i, j] = model.keymap[j][sequence[i][j]]
-                    except:
-                        raise ValueError("Symbol '{}' is not defined in a distribution".format(sequence[i][j]))
+                    raise ValueError("Symbol '{}' is not defined in a distribution"
+                        .format(symbol))
     else:
         sequence_ndarray = numpy.empty(n, dtype=numpy.float64)
+        keymap = model.keymap[0]
+
         for i in range(n):
-            try:
-                sequence_ndarray[i] = model.keymap[0][sequence[i]]
-            except KeyError:
-                raise ValueError("Symbol '{}' is not defined in a distribution".format(sequence[i]))
+            symbol = sequence[i]
+
+            if isinstance(symbol, str) and symbol == 'nan':
+                sequence_ndarray[i] = numpy.nan
+            elif isinstance(symbol, (int, float)) and numpy.isnan(symbol):
+                sequence_ndarray[i] = numpy.nan
+            elif sequence[i] in keymap:
+                sequence_ndarray[i] = keymap[symbol]
+            else:
+                raise ValueError("Symbol '{}' is not defined in a distribution"
+                    .format(symbol))
 
     return sequence_ndarray
 
@@ -1419,7 +1435,7 @@ cdef class HiddenMarkovModel(GraphModel):
                 if ki < self.silent_start or ki >= l:
                     continue
 
-                # For each current-step preceeding silent state k
+                # For each current-step preceding silent state k
                 log_probability = pair_lse(log_probability,
                     f[ki] + self.in_transition_log_probabilities[k])
 
@@ -1473,7 +1489,7 @@ cdef class HiddenMarkovModel(GraphModel):
                     ki = self.in_transitions[k]
                     if ki < self.silent_start or ki >= l:
                         continue
-                    # For each current-step preceeding silent state k
+                    # For each current-step preceding silent state k
                     log_probability = pair_lse(log_probability,
                         f[(i+1)*m + ki] + self.in_transition_log_probabilities[k])
 
@@ -2002,7 +2018,7 @@ cdef class HiddenMarkovModel(GraphModel):
                 if ki < self.silent_start or ki >= l:
                     continue
 
-                # For each current-step preceeding silent state k
+                # For each current-step preceding silent state k
                 # This holds the log-probability coming that way
                 state_log_probability = v[ki] + self.in_transition_log_probabilities[k]
 
@@ -2061,7 +2077,7 @@ cdef class HiddenMarkovModel(GraphModel):
                     if ki < self.silent_start or ki >= l:
                         continue
 
-                    # For each current-step preceeding silent state k
+                    # For each current-step preceding silent state k
                     # This holds the log-probability coming that way
                     state_log_probability = v[(i+1)*m + ki] + \
                         self.in_transition_log_probabilities[k]
@@ -2374,7 +2390,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
         weights : array-like or None, optional
             An array of weights, one for each sequence to train on. If None,
-            all sequences are equaly weighted. Default is None.
+            all sequences are equally weighted. Default is None.
 
         labels : array-like or None, optional
             An array of state labels for each sequence. This is only used in
@@ -2638,7 +2654,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
         weights : array-like or None, optional
             An array of weights, one for each sequence to train on. If None,
-            all sequences are equaly weighted. Default is None.
+            all sequences are equally weighted. Default is None.
 
         labels : array-like or None, optional
             An array of state labels for each sequence. This is only used in
@@ -3148,7 +3164,7 @@ cdef class HiddenMarkovModel(GraphModel):
         Parameters
         ----------
         separators : tuple, optional
-            The two separaters to pass to the json.dumps function for formatting.
+            The two separators to pass to the json.dumps function for formatting.
 
         indent : int, optional
             The indentation to use at each level. Passed to json.dumps for
@@ -3402,7 +3418,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
         weights : array-like or None, optional
             An array of weights, one for each sequence to train on. If None,
-            all sequences are equaly weighted. Default is None.
+            all sequences are equally weighted. Default is None.
 
         labels : array-like or None, optional
             An array of state labels for each sequence. This is only used in
@@ -3540,7 +3556,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
             labels_ = [[label for label in l] for l in labels if l is not None]
             labels_ = numpy.concatenate(labels_)
-            labels_ = numpy.array([l for l in labels_ if l != name+"-start" and l != name+"-end"])
+            labels_ = numpy.array([l for l in labels_ if l != str(name)+"-start" and l != str(name)+"-end"])
             label_set = numpy.unique(labels_)
 
             if distribution is DiscreteDistribution:

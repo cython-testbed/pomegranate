@@ -38,6 +38,8 @@ numpy.import_array()
 cdef extern from "numpy/ndarraytypes.h":
 	void PyArray_ENABLEFLAGS(numpy.ndarray X, int flags)
 
+cdef bint isnan(double x) nogil:
+	return npy_isnan(x)
 
 # Define some useful constants
 DEF NEGINF = float("-inf")
@@ -332,8 +334,8 @@ def _check_input(X, keymap):
 
 	return X_ndarray
 
-def parallelize_function(X, cls, func, filename):
+def parallelize_function(X, cls, func, filename, **kwargs):
 	"""Parallelize a function using joblib multiprocessing."""
 
 	model = cls.from_json(filename)
-	return getattr(model, func)(X)
+	return getattr(model, func)(X, **kwargs)

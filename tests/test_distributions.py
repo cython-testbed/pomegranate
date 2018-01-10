@@ -1,9 +1,9 @@
 from __future__ import (division)
 
 from pomegranate import (Distribution,
+						 UniformDistribution,
 						 NormalDistribution,
 						 DiscreteDistribution,
-						 UniformDistribution,
 						 LogNormalDistribution,
 						 ExponentialDistribution,
 						 GammaDistribution,
@@ -22,20 +22,20 @@ from nose.tools import assert_equal
 from nose.tools import assert_not_equal
 from nose.tools import assert_less_equal
 from nose.tools import assert_true
+from nose.tools import assert_raises
+from numpy.testing import assert_array_equal
+from numpy.testing import assert_array_almost_equal
 import pickle
 import numpy
 
+nan = numpy.nan
+inf = float("inf")
+
 def setup():
-	'''
-	No setup or teardown needs to be done in this case.
-	'''
 	pass
 
 
 def teardown():
-	'''
-	No setup or teardown needs to be done in this case.
-	'''
 	pass
 
 
@@ -52,138 +52,386 @@ def discrete_equality(x, y, z=8):
 	return True
 
 
-@with_setup(setup, teardown)
-def test_normal():
+def test_distributions_uniform_initialization():
+	d = UniformDistribution(0, 10)
+	assert_equal(d.name, "UniformDistribution")
+	assert_array_equal(d.parameters, [0, 10])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_blank():
+	d = UniformDistribution.blank()
+	assert_equal(d.name, "UniformDistribution")
+	assert_array_equal(d.parameters, [0, 0])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_initialization_error():
+	assert_raises(TypeError, UniformDistribution, 0)
+	assert_raises(TypeError, UniformDistribution, [0, 10])
+	assert_raises(TypeError, UniformDistribution, 0, 10, 4, 7, 3)
+
+
+def test_distributions_uniform_log_probability():
+	d = UniformDistribution(0, 10)
+	e = UniformDistribution(0., 10.)
+
+	assert_almost_equal(d.log_probability(5), -2.302585092)
+	assert_equal(d.log_probability(5), e.log_probability(5))
+	assert_equal(d.log_probability(5), d.log_probability(5.))
+
+	assert_almost_equal(d.log_probability(0), -2.302585092)
+	assert_equal(d.log_probability(0), e.log_probability(0.))
+
+	assert_equal(d.log_probability(-1), -inf)
+	assert_equal(d.log_probability(11), -inf)
+
+
+def test_distributions_uniform_nan_log_probability():
+	d = UniformDistribution(0, 10)
+
+	assert_equal(d.log_probability(nan), 0)
+	assert_array_almost_equal(d.log_probability([nan, 5]), [0, -2.302585092])
+
+
+def test_distributions_uniform_underflow_log_probability():
+	d = UniformDistribution(0, 10)
+	assert_equal(d.log_probability(1e100), float("-inf"))
+
+
+def test_distributions_uniform_probability():
+	d = UniformDistribution(0, 10)
+	e = UniformDistribution(0., 10.)
+
+	assert_almost_equal(d.probability(5), 0.0999999999)
+	assert_equal(d.probability(5), e.probability(5))
+	assert_equal(d.probability(5), d.probability(5.))
+
+	assert_almost_equal(d.probability(0), 0.0999999999)
+	assert_equal(d.probability(0), e.probability(0.))
+
+	assert_equal(d.probability(-1), 0)
+	assert_equal(d.probability(11), 0)
+
+
+def test_distributions_uniform_nan_probability():
+	d = UniformDistribution(0, 10)
+
+	assert_equal(d.probability(nan), 1)
+	assert_array_almost_equal(d.probability([nan, 5]), [1, 0.0999999999])
+
+
+def test_distributions_uniform_underflow_probability():
+	d = UniformDistribution(0, 10)
+	assert_almost_equal(d.probability(1e100), 0.0)
+
+
+def test_distributions_uniform_fit():
+	d = UniformDistribution(5, 2)
+	e = UniformDistribution(5, 2)
+
+	d.fit([5, 4, 5, 4, 6, 5, 6, 5, 4, 6, 5, 4])
+
+	assert_array_equal(d.parameters, [4, 6])
+	assert_not_equal(d.log_probability(4), e.log_probability(4))
+	assert_almost_equal(d.log_probability(4), -0.69314718055994529)
+	assert_equal(d.log_probability(18), -inf)
+	assert_equal(d.log_probability(1e8), -inf)
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_nan_fit():
+	d = UniformDistribution(5, 2)
+	e = UniformDistribution(5, 2)
+
+	d.fit([5, 4, nan, 5, 4, nan, 6, 5, 6, nan, nan, 5, 4, 6, nan, 5, 4, nan])
+
+	assert_array_equal(d.parameters, [4, 6])
+	assert_not_equal(d.log_probability(4), e.log_probability(4))
+	assert_almost_equal(d.log_probability(4), -0.69314718055994529)
+	assert_equal(d.log_probability(18), -inf)
+	assert_equal(d.log_probability(1e8), -inf)
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_exclusive_nan_fit():
+	d = UniformDistribution(0, 10)
+	e = UniformDistribution(0, 10)
+
+	d.fit([nan, nan, nan, nan, nan])
+
+	assert_array_equal(d.parameters, [0, 10])
+	assert_almost_equal(d.log_probability(4), e.log_probability(4.))
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_weighted_fit():
+	d = UniformDistribution(0, 10)
+
+	d.fit([0, 2, 3, 2, 100], weights=[0, 5, 2, 3, 200])
+	assert_array_equal(d.parameters, [2, 100])
+	assert_almost_equal(d.log_probability(50), -4.58496747867)
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_inertia_fit():
+	d = UniformDistribution(0, 10)
+
+	d.fit([0, 5, 3, 5, 7, 3, 4, 5, 2], inertia=0.5)
+
+	assert_array_equal(d.parameters, [0, 8.5])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_fit_ooc():
+	d = UniformDistribution(0, 10)
+	d.summarize([0, 2], weights=[0, 5])
+	d.summarize([3, 2], weights=[2, 3])
+	d.summarize([100], weights=[200])
+
+	assert_array_equal(d.summaries, [2, 100, 210])
+
+	d.from_summaries()
+
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+	assert_array_equal(d.parameters, [2, 100])
+
+
+def test_distributions_uniform_freeze_fit():
+	d = UniformDistribution(0, 10)
+	d.freeze()
+	d.fit([0, 1, 1, 2, 3, 2, 1, 2, 2])
+
+	assert_array_almost_equal(d.parameters, [0, 10])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_freeze_thaw_fit():
+	d = UniformDistribution(0, 10)
+	d.freeze()
+	d.thaw()
+
+	d.fit([5, 4, 5, 4, 6, 5, 6, 5, 4, 6, 5, 4])
+	assert_array_equal(d.parameters, [4, 6])
+
+
+def test_distributions_uniform_from_samples():
+	d = UniformDistribution.from_samples([5, 2, 4, 6, 8, 3, 6, 8, 3])
+
+	assert_array_equal(d.parameters, [2, 8])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_nan_from_samples():
+	d = UniformDistribution.from_samples([5, nan, 2, nan, 4, 6, nan, 8, 3, nan, 6, nan, 8, 3])
+
+	assert_array_equal(d.parameters, [2, 8])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+def test_distributions_uniform_pickle_serialization():
+	d = UniformDistribution(0, 10)
+
+	e = pickle.loads(pickle.dumps(d))
+	assert_equal(e.name, "UniformDistribution")
+	assert_array_equal(e.parameters, [0, 10])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_uniform_json_serialization():
+	d = UniformDistribution(0, 10)
+
+	e = Distribution.from_json(d.to_json())
+	assert_equal(e.name, "UniformDistribution")
+	assert_array_equal(e.parameters, [0, 10])
+	assert_array_equal(d.summaries, [inf, -inf, 0])
+
+
+def test_distributions_normal_initialization():
+	d = NormalDistribution(5, 2)
+	assert_equal(d.name, "NormalDistribution")
+	assert_array_equal(d.parameters, [5, 2])
+	assert_array_equal(d.summaries, [0, 0, 0])
+
+
+def test_distributions_normal_blank():
+	d = NormalDistribution.blank()
+	assert_equal(d.name, "NormalDistribution")
+	assert_array_equal(d.parameters, [0, 0])
+	assert_array_equal(d.summaries, [0, 0, 0])
+
+
+def test_distributions_normal_initialization_error():
+	assert_raises(TypeError, NormalDistribution, 5)
+	assert_raises(TypeError, NormalDistribution, [5, 1])
+	assert_raises(TypeError, NormalDistribution, 5, 1, 4, 7, 3)
+
+
+def test_distributions_normal_log_probability():
 	d = NormalDistribution(5, 2)
 	e = NormalDistribution(5., 2.)
 
-	assert_true(isinstance(d.log_probability(5), float))
-	assert_true(isinstance(d.log_probability([5]), float))
-	assert_true(isinstance(d.log_probability([5, 6]), numpy.ndarray))
-
-	assert_almost_equal(d.log_probability(5), -1.61208571, 8)
+	assert_almost_equal(d.log_probability(5), -1.61208571)
 	assert_equal(d.log_probability(5), e.log_probability(5))
 	assert_equal(d.log_probability(5), d.log_probability(5.))
 
 	assert_almost_equal(d.log_probability(0), -4.737085713764219)
 	assert_equal(d.log_probability(0), e.log_probability(0.))
 
+
+def test_distributions_normal_nan_log_probability():
+	d = NormalDistribution(5, 2)
+
+	assert_equal(d.log_probability(nan), 0)
+	assert_array_almost_equal(d.log_probability([nan, 5]), [0, -1.61208571])
+
+
+def test_distributions_normal_underflow_log_probability():
+	d = NormalDistribution(5, 1e-10)
+	assert_almost_equal(d.log_probability(1e100), -4.9999999999999987e+219)
+
+
+def test_distributions_normal_probability():
+	d = NormalDistribution(5, 2)
+	e = NormalDistribution(5., 2.)
+
+	assert_almost_equal(d.probability(5), 0.19947114)
+	assert_equal(d.probability(5), e.probability(5))
+	assert_equal(d.probability(5), d.probability(5.))
+
+	assert_almost_equal(d.probability(0), 0.0087641502)
+	assert_equal(d.probability(0), e.probability(0.))
+
+
+def test_distributions_normal_nan_probability():
+	d = NormalDistribution(5, 2)
+
+	assert_equal(d.probability(nan), 1)
+	assert_array_almost_equal(d.probability([nan, 5]), [1, 0.199471])
+
+
+def test_distributions_normal_underflow_probability():
+	d = NormalDistribution(5, 1e-10)
+	assert_almost_equal(d.probability(1e100), 0.0)
+
+
+def test_distributions_normal_fit():
+	d = NormalDistribution(5, 2)
+	e = NormalDistribution(5, 2)
+
 	d.fit([5, 4, 5, 4, 6, 5, 6, 5, 4, 6, 5, 4])
 
-	assert_almost_equal(d.parameters[0], 4.9167, 4)
-	assert_almost_equal(d.parameters[1], 0.7592, 4)
+	assert_array_almost_equal(d.parameters, [4.9167, 0.7592], 4)
 	assert_not_equal(d.log_probability(4), e.log_probability(4))
 	assert_almost_equal(d.log_probability(4), -1.3723678499651766)
 	assert_almost_equal(d.log_probability(18), -149.13140399454429)
 	assert_almost_equal(d.log_probability(1e8), -8674697942168743.0, -4)
+	assert_array_equal(d.summaries, [0, 0, 0])
 
-	d = NormalDistribution(5, 1e-10)
-	assert_almost_equal(d.log_probability(1e100), -4.9999999999999994e+219)
 
+def test_distributions_normal_nan_fit():
+	d = NormalDistribution(5, 2)
+	e = NormalDistribution(5, 2)
+
+	d.fit([5, 4, nan, 5, 4, nan, 6, 5, 6, nan, nan, 5, 4, 6, nan, 5, 4, nan])
+
+	assert_array_almost_equal(d.parameters, [4.9167, 0.7592], 4)
+	assert_not_equal(d.log_probability(4), e.log_probability(4))
+	assert_almost_equal(d.log_probability(4), -1.3723678499651766)
+	assert_almost_equal(d.log_probability(18), -149.13140399454429)
+	assert_almost_equal(d.log_probability(1e8), -8674697942168743.0, -4)
+	assert_array_equal(d.summaries, [0, 0, 0])
+
+
+def test_distributions_normal_exclusive_nan_fit():
+	d = NormalDistribution(5, 2)
+	e = NormalDistribution(5, 2)
+
+	d.fit([nan, nan, nan, nan, nan])
+
+	assert_array_equal(d.parameters, [5, 2])
+	assert_almost_equal(d.log_probability(4), e.log_probability(4.))
+	assert_array_equal(d.summaries, [0, 0, 0])
+
+
+def test_distributions_normal_weighted_fit():
+	d = NormalDistribution(5, 2)
 
 	d.fit([0, 2, 3, 2, 100], weights=[0, 5, 2, 3, 200])
-	assert_equal(round(d.parameters[0], 4), 95.3429)
-	assert_equal(round(d.parameters[1], 4), 20.8276)
-	assert_equal(round(d.log_probability(50), 8), -6.32501194)
+	assert_array_almost_equal(d.parameters, [95.3429, 20.8276], 4)
+	assert_almost_equal(d.log_probability(50), -6.32501194)
+	assert_array_equal(d.summaries, [0, 0, 0])
 
+
+def test_distributions_normal_inertia_fit():
 	d = NormalDistribution(5, 2)
+
 	d.fit([0, 5, 3, 5, 7, 3, 4, 5, 2], inertia=0.5)
 
-	assert_equal(round(d.parameters[0], 4), 4.3889)
-	assert_equal(round(d.parameters[1], 4), 1.9655)
+	assert_array_almost_equal(d.parameters, [4.3889, 1.9655], 4)
+	assert_array_equal(d.summaries, [0, 0, 0])
 
+
+def test_distributions_normal_fit_ooc():
+	d = NormalDistribution(5, 2)
 	d.summarize([0, 2], weights=[0, 5])
 	d.summarize([3, 2], weights=[2, 3])
 	d.summarize([100], weights=[200])
+
+	assert_array_equal(d.summaries, [2.100000e+02, 2.002200e+04, 2.000050e+06])
+
 	d.from_summaries()
 
-	assert_equal(round(d.parameters[0], 4), 95.3429)
-	assert_equal(round(d.parameters[1], 4), 20.8276)
+	assert_array_equal(d.summaries, [0, 0, 0])
+	assert_array_almost_equal(d.parameters, [95.3429, 20.8276], 4)
 
+
+def test_distributions_normal_freeze_fit():
+	d = NormalDistribution(5, 2)
 	d.freeze()
 	d.fit([0, 1, 1, 2, 3, 2, 1, 2, 2])
-	assert_equal(round(d.parameters[0], 4), 95.3429)
-	assert_equal(round(d.parameters[1], 4), 20.8276)
 
+	assert_array_almost_equal(d.parameters, [5, 2])
+	assert_array_equal(d.summaries, [0, 0, 0])
+
+
+def test_distributions_normal_freeze_thaw_fit():
+	d = NormalDistribution(5, 2)
+	d.freeze()
 	d.thaw()
+
 	d.fit([5, 4, 5, 4, 6, 5, 6, 5, 4, 6, 5, 4])
-	assert_equal(round(d.parameters[0], 4), 4.9167)
-	assert_equal(round(d.parameters[1], 4), 0.7592)
+	assert_array_almost_equal(d.parameters, [4.9166, 0.7592], 4)
+
+
+def test_distributions_normal_from_samples():
+	d = NormalDistribution.from_samples([5, 2, 4, 6, 8, 3, 6, 8, 3])
+
+	assert_array_almost_equal(d.parameters, [5.0, 2.05480466])
+	assert_array_equal(d.summaries, [0, 0, 0])
+
+
+def test_distributions_normal_nan_from_samples():
+	d = NormalDistribution.from_samples([5, nan, 2, nan, 4, 6, nan, 8, 3, nan, 6, nan, 8, 3])
+
+	assert_array_almost_equal(d.parameters, [5.0, 2.05480466])
+	assert_array_equal(d.summaries, [0, 0, 0])
+
+def test_distributions_normal_pickle_serialization():
+	d = NormalDistribution(5, 2)
+
+	e = pickle.loads(pickle.dumps(d))
+	assert_equal(e.name, "NormalDistribution")
+	assert_array_equal(e.parameters, [5, 2])
+	assert_array_equal(e.summaries, [0, 0, 0])
+
+
+def test_distributions_normal_json_serialization():
+	d = NormalDistribution(5, 2)
 
 	e = Distribution.from_json(d.to_json())
 	assert_equal(e.name, "NormalDistribution")
-	assert_equal(round(e.parameters[0], 4), 4.9167)
-	assert_equal(round(e.parameters[1], 4), 0.7592)
-
-	f = pickle.loads(pickle.dumps(e))
-	assert_equal(f.name, "NormalDistribution")
-	assert_equal(round(f.parameters[0], 4), 4.9167)
-	assert_equal(round(f.parameters[1], 4), 0.7592)
-
-
-@with_setup(setup, teardown)
-def test_uniform():
-	d = UniformDistribution(0, 10)
-
-	assert_almost_equal(d.log_probability(2.34), -2.3025850929940455, 8)
-	assert_equal(d.log_probability(2), d.log_probability(8))
-	assert_equal(d.log_probability(10), d.log_probability(3.4))
-	assert_equal(d.log_probability(1.7), d.log_probability(9.7))
-	assert_equal(d.log_probability(10.0001), float("-inf"))
-	assert_equal(d.log_probability(-0.0001), float("-inf"))
-
-	for i in range(10):
-		data = numpy.random.randn(100) * 100
-		d.fit(data)
-		assert_equal(d.parameters[0], data.min())
-		assert_equal(d.parameters[1], data.max())
-
-	minimum, maximum = data.min(), data.max()
-	for i in range(100):
-		sample = d.sample()
-		assert_less_equal(minimum, sample)
-		assert_less_equal(sample,  maximum)
-
-	d = UniformDistribution(0, 10)
-	d.fit([-5, 20], inertia=0.5)
-
-	assert_equal(d.parameters[0], -2.5)
-	assert_equal(d.parameters[1], 15)
-
-	d.fit([-100, 100], inertia=1.0)
-
-	assert_equal(d.parameters[0], -2.5)
-	assert_equal(d.parameters[1], 15)
-
-	d.summarize([0, 50, 2, 24, 28])
-	d.summarize([-20, 7, 8, 4])
-	d.from_summaries(inertia=0.75)
-
-	assert_equal(d.parameters[0], -6.875)
-	assert_equal(d.parameters[1], 23.75)
-
-	d.summarize([0, 100])
-	d.summarize([100, 200])
-	d.from_summaries()
-
-	assert_equal(d.parameters[0], 0)
-	assert_equal(d.parameters[1], 200)
-
-	d.freeze()
-	d.fit([0, 1, 6, 7, 8, 3, 4, 5, 2])
-	assert_equal(d.parameters, [0, 200])
-
-	d.thaw()
-	d.fit([0, 1, 6, 7, 8, 3, 4, 5, 2])
-	assert_equal(d.parameters, [0, 8])
-
-	e = Distribution.from_json(d.to_json())
-	assert_equal(e.name, "UniformDistribution")
-	assert_equal(e.parameters, [0, 8])
-
-	f = pickle.loads(pickle.dumps(e))
-	assert_equal(f.name, "UniformDistribution")
-	assert_equal(f.parameters, [0, 8])
+	assert_array_equal(e.parameters, [5, 2])
+	assert_array_equal(e.summaries, [0, 0, 0])
 
 
 @with_setup(setup, teardown)
@@ -650,13 +898,11 @@ def test_conditional():
 							 DiscreteDistribution({False: 0.941, True: 0.059}))
 
 
-def test_monty():
+def setup_cpt():
 	guest = DiscreteDistribution({'A': 1. / 3, 'B': 1. / 3, 'C': 1. / 3})
-
-	# The actual prize is independent of the other distributions
 	prize = DiscreteDistribution({'A': 1. / 3, 'B': 1. / 3, 'C': 1. / 3})
 
-	# Monty is dependent on both the guest and the prize.
+	global monty
 	monty = ConditionalProbabilityTable(
 		[['A', 'A', 'A', 0.0],
 		 ['A', 'A', 'B', 0.5],
@@ -686,36 +932,293 @@ def test_monty():
 		 ['C', 'C', 'B', 0.5],
 		 ['C', 'C', 'C', 0.0]], [guest, prize])
 
+	global X
+	X = [['A', 'A', 'C'],
+	 	['A', 'A', 'B'],
+		['A', 'A', 'C'],
+		['A', 'A', 'B'],
+		['A', 'A', 'A'],
+		['A', 'B', 'A'],
+		['A', 'B', 'A'],
+		['A', 'B', 'B'],
+		['A', 'B', 'C'],
+		['A', 'C', 'A'],
+		['A', 'C', 'C'],
+		['A', 'C', 'C'],
+		['A', 'C', 'C'],
+		['A', 'C', 'B'],
+		['B', 'A', 'A'],
+		['B', 'A', 'B'],
+		['B', 'A', 'B'],
+		['B', 'A', 'B'],
+		['B', 'B', 'B'],
+		['B', 'B', 'C'],
+		['B', 'C', 'A'],
+		['B', 'C', 'B'],
+		['B', 'C', 'A'],
+		['B', 'C', 'B'],
+		['C', 'A', 'B'],
+		['C', 'B', 'B'],
+		['C', 'B', 'C'],
+		['C', 'C', 'A'],
+		['C', 'C', 'C'],
+		['C', 'C', 'C'],
+		['C', 'C', 'C']]
+
+
+	global X_nan
+	X_nan = [['nan', 'A', 'C'],
+	 	['A', 'A', 'nan'],
+		['A', 'nan', 'C'],
+		['A', 'A', 'B'],
+		['A', 'A', 'A'],
+		['A', 'B', 'nan'],
+		['A', 'B', 'A'],
+		['A', 'B', 'nan'],
+		['A', 'B', 'C'],
+		['A', 'C', 'A'],
+		['A', 'nan', 'C'],
+		['A', 'C', 'C'],
+		['A', 'C', 'C'],
+		['A', 'C', 'B'],
+		['B', 'nan', 'A'],
+		['B', 'A', 'B'],
+		['nan', 'A', 'B'],
+		['B', 'A', 'B'],
+		['B', 'B', 'B'],
+		['B', 'B', 'C'],
+		['B', 'C', 'A'],
+		['nan', 'C', 'B'],
+		['B', 'C', 'A'],
+		['nan', 'C', 'B'],
+		['C', 'A', 'B'],
+		['C', 'B', 'B'],
+		['C', 'nan', 'C'],
+		['C', 'nan', 'A'],
+		['C', 'nan', 'C'],
+		['C', 'C', 'C'],
+		['C', 'C', 'C']]
+
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_initialization():
+	assert_equal(monty.name, "ConditionalProbabilityTable")
+	assert_array_equal(monty.parameters[0], [['A', 'A', 'A', 0.0],
+		 ['A', 'A', 'B', 0.5],
+		 ['A', 'A', 'C', 0.5],
+		 ['A', 'B', 'A', 0.0],
+		 ['A', 'B', 'B', 0.0],
+		 ['A', 'B', 'C', 1.0],
+		 ['A', 'C', 'A', 0.0],
+		 ['A', 'C', 'B', 1.0],
+		 ['A', 'C', 'C', 0.0],
+		 ['B', 'A', 'A', 0.0],
+		 ['B', 'A', 'B', 0.0],
+		 ['B', 'A', 'C', 1.0],
+		 ['B', 'B', 'A', 0.5],
+		 ['B', 'B', 'B', 0.0],
+		 ['B', 'B', 'C', 0.5],
+		 ['B', 'C', 'A', 1.0],
+		 ['B', 'C', 'B', 0.0],
+		 ['B', 'C', 'C', 0.0],
+		 ['C', 'A', 'A', 0.0],
+		 ['C', 'A', 'B', 1.0],
+		 ['C', 'A', 'C', 0.0],
+		 ['C', 'B', 'A', 1.0],
+		 ['C', 'B', 'B', 0.0],
+		 ['C', 'B', 'C', 0.0],
+		 ['C', 'C', 'A', 0.5],
+		 ['C', 'C', 'B', 0.5],
+		 ['C', 'C', 'C', 0.0]])
+
+	assert_equal(monty.n_columns, 3)
+	assert_equal(monty.m, 2)
+
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_log_probability():
 	assert_equal(monty.log_probability(('A', 'B', 'C')), 0.)
 	assert_equal(monty.log_probability(('C', 'B', 'A')), 0.)
-	assert_equal(monty.log_probability(('C', 'C', 'C')), float("-inf"))
-	assert_equal(monty.log_probability(('A', 'A', 'A')), float("-inf"))
+	assert_equal(monty.log_probability(('C', 'C', 'C')), -inf)
+	assert_equal(monty.log_probability(('A', 'A', 'A')), -inf)
 	assert_equal(monty.log_probability(('B', 'A', 'C')), 0.)
 	assert_equal(monty.log_probability(('C', 'A', 'B')), 0.)
 
-	data = [['A', 'A', 'C'],
-			['A', 'A', 'C'],
-			['A', 'A', 'B'],
-			['A', 'A', 'A'],
-			['A', 'A', 'C'],
-			['B', 'B', 'B'],
-			['B', 'B', 'C'],
-			['C', 'C', 'A'],
-			['C', 'C', 'C'],
-			['C', 'C', 'C'],
-			['C', 'C', 'C'],
-			['C', 'B', 'A']]
 
-	monty.fit(data, weights=[1, 1, 3, 3, 1, 1, 3, 7, 1, 1, 1, 1])
+@with_setup(setup_cpt)
+def test_distributions_cpt_nan_log_probability():
+	assert_equal(monty.log_probability(('A', 'nan', 'C')), 0.)
+	assert_equal(monty.log_probability(('nan', 'nan', 'C')), 0.)
+	assert_equal(monty.log_probability(('A', 'nan', 'nan')), 0.)
+	assert_equal(monty.log_probability(('nan', 'nan', 'nan')), 0.)
+	assert_equal(monty.log_probability(('nan', 'B', 'C')), 0.)
+	assert_equal(monty.log_probability(('A', 'B', 'nan')), 0.)
 
-	assert_equal(monty.log_probability(('A', 'A', 'A')),
-				 monty.log_probability(('A', 'A', 'C')))
-	assert_equal(monty.log_probability(('A', 'A', 'A')),
-				 monty.log_probability(('A', 'A', 'B')))
-	assert_equal(monty.log_probability(('B', 'A', 'A')),
-				 monty.log_probability(('B', 'A', 'C')))
-	assert_equal(monty.log_probability(('B', 'B', 'A')), float("-inf"))
-	assert_equal(monty.log_probability(('C', 'C', 'B')), float("-inf"))
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_probability():
+	assert_equal(monty.probability(('A', 'B', 'C')), 1.)
+	assert_equal(monty.probability(('C', 'B', 'A')), 1.)
+	assert_equal(monty.probability(('C', 'C', 'C')), 0.)
+	assert_equal(monty.probability(('A', 'A', 'A')), 0.)
+	assert_equal(monty.probability(('B', 'A', 'C')), 1.)
+	assert_equal(monty.probability(('C', 'A', 'B')), 1.)
+
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_nan_probability():
+	assert_equal(monty.probability(('A', 'nan', 'C')), 1.)
+	assert_equal(monty.probability(('nan', 'nan', 'C')), 1.)
+	assert_equal(monty.probability(('A', 'nan', 'nan')), 1.)
+	assert_equal(monty.probability(('nan', 'nan', 'nan')), 1.)
+	assert_equal(monty.probability(('nan', 'B', 'C')), 1.)
+	assert_equal(monty.probability(('A', 'B', 'nan')), 1.)
+
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_fit():
+	monty.fit(X)
+
+	assert_array_equal(monty.parameters[0],
+		[['A', 'A', 'A', 0.2], 
+		['A', 'A', 'B', 0.4], 
+		['A', 'A', 'C', 0.4], 
+		['A', 'B', 'A', 0.5], 
+		['A', 'B', 'B', 0.25], 
+		['A', 'B', 'C', 0.25], 
+		['A', 'C', 'A', 0.2], 
+		['A', 'C', 'B', 0.2], 
+		['A', 'C', 'C', 0.6], 
+		['B', 'A', 'A', 0.25], 
+		['B', 'A', 'B', 0.75], 
+		['B', 'A', 'C', 0.0], 
+		['B', 'B', 'A', 0.0], 
+		['B', 'B', 'B', 0.5], 
+		['B', 'B', 'C', 0.5], 
+		['B', 'C', 'A', 0.5], 
+		['B', 'C', 'B', 0.5], 
+		['B', 'C', 'C', 0.0], 
+		['C', 'A', 'A', 0.0], 
+		['C', 'A', 'B', 1.0], 
+		['C', 'A', 'C', 0.0], 
+		['C', 'B', 'A', 0.0], 
+		['C', 'B', 'B', 0.5], 
+		['C', 'B', 'C', 0.5], 
+		['C', 'C', 'A', 0.25], 
+		['C', 'C', 'B', 0.0], 
+		['C', 'C', 'C', 0.75]])
+
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_nan_fit():
+	monty.fit(X_nan)
+
+	assert_array_equal(monty.parameters[0],
+		[['A', 'A', 'A', 0.5], 
+		['A', 'A', 'B', 0.5], 
+		['A', 'A', 'C', 0.0], 
+		['A', 'B', 'A', 0.5], 
+		['A', 'B', 'B', 0.0], 
+		['A', 'B', 'C', 0.5], 
+		['A', 'C', 'A', 0.25], 
+		['A', 'C', 'B', 0.25], 
+		['A', 'C', 'C', 0.5], 
+		['B', 'A', 'A', 0.0], 
+		['B', 'A', 'B', 1.0], 
+		['B', 'A', 'C', 0.0], 
+		['B', 'B', 'A', 0.0], 
+		['B', 'B', 'B', 0.5], 
+		['B', 'B', 'C', 0.5], 
+		['B', 'C', 'A', 1.0], 
+		['B', 'C', 'B', 0.0], 
+		['B', 'C', 'C', 0.0], 
+		['C', 'A', 'A', 0.0], 
+		['C', 'A', 'B', 1.0], 
+		['C', 'A', 'C', 0.0], 
+		['C', 'B', 'A', 0.0], 
+		['C', 'B', 'B', 1.0], 
+		['C', 'B', 'C', 0.0], 
+		['C', 'C', 'A', 0.0], 
+		['C', 'C', 'B', 0.0], 
+		['C', 'C', 'C', 1.0]])
+
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_exclusive_nan_fit():
+	X = [['nan', 'nan', 'nan'],
+		 ['nan', 'nan', 'nan'],
+		 ['nan', 'nan', 'nan'],
+		 ['nan', 'nan', 'nan'],
+		 ['nan', 'nan', 'nan']]
+
+	monty.fit(X)
+
+	assert_array_equal(monty.parameters[0],
+		[['A', 'A', 'A', 0.0],
+		 ['A', 'A', 'B', 0.5],
+		 ['A', 'A', 'C', 0.5],
+		 ['A', 'B', 'A', 0.0],
+		 ['A', 'B', 'B', 0.0],
+		 ['A', 'B', 'C', 1.0],
+		 ['A', 'C', 'A', 0.0],
+		 ['A', 'C', 'B', 1.0],
+		 ['A', 'C', 'C', 0.0],
+		 ['B', 'A', 'A', 0.0],
+		 ['B', 'A', 'B', 0.0],
+		 ['B', 'A', 'C', 1.0],
+		 ['B', 'B', 'A', 0.5],
+		 ['B', 'B', 'B', 0.0],
+		 ['B', 'B', 'C', 0.5],
+		 ['B', 'C', 'A', 1.0],
+		 ['B', 'C', 'B', 0.0],
+		 ['B', 'C', 'C', 0.0],
+		 ['C', 'A', 'A', 0.0],
+		 ['C', 'A', 'B', 1.0],
+		 ['C', 'A', 'C', 0.0],
+		 ['C', 'B', 'A', 1.0],
+		 ['C', 'B', 'B', 0.0],
+		 ['C', 'B', 'C', 0.0],
+		 ['C', 'C', 'A', 0.5],
+		 ['C', 'C', 'B', 0.5],
+		 ['C', 'C', 'C', 0.0]])
+
+
+@with_setup(setup_cpt)
+def test_distributions_cpt_weighted_fit():
+	weights = [1, 3, 2, 3, 7, 4, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 1, 2, 1, 3, 1, 
+		1, 1, 2, 1, 1, 1, 3, 1, 1, 1]
+
+	monty.fit(X, weights=weights)
+
+	assert_array_equal(monty.parameters[0],
+		[['A', 'A', 'A', 0.4375], 
+		['A', 'A', 'B', 0.375], 
+		['A', 'A', 'C', 0.1875], 
+		['A', 'B', 'A', 0.6], 
+		['A', 'B', 'B', 0.2], 
+		['A', 'B', 'C', 0.2], 
+		['A', 'C', 'A', 0.25], 
+		['A', 'C', 'B', 0.0], 
+		['A', 'C', 'C', 0.75], 
+		['B', 'A', 'A', 0.0], 
+		['B', 'A', 'B', 1.0], 
+		['B', 'A', 'C', 0.0], 
+		['B', 'B', 'A', 0.0], 
+		['B', 'B', 'B', 0.25], 
+		['B', 'B', 'C', 0.75], 
+		['B', 'C', 'A', 0.4], 
+		['B', 'C', 'B', 0.6], 
+		['B', 'C', 'C', 0.0], 
+		['C', 'A', 'A', 0.0], 
+		['C', 'A', 'B', 1.0], 
+		['C', 'A', 'C', 0.0], 
+		['C', 'B', 'A', 0.0], 
+		['C', 'B', 'B', 0.5], 
+		['C', 'B', 'C', 0.5], 
+		['C', 'C', 'A', 0.5], 
+		['C', 'C', 'B', 0.0], 
+		['C', 'C', 'C', 0.5]])
+
 
 def test_univariate_log_probability():
 	distributions = [UniformDistribution, NormalDistribution, ExponentialDistribution,
@@ -751,7 +1254,7 @@ def test_cpd_sampling():
 	# P(A) = 0.1*0.1 + 0.9*0.7 = 0.64
 	# P(B) = 0.1*0.9 + 0.9*0.3 = 0.36
 	true = [0.64, 0.36]
-	est = numpy.bincount([0 if d2.sample() == "A" else 1 for i in range(1000)]) / 1000.0
+	est = numpy.bincount([0 if d2.sample() == "A" else 1 for i in range(2000)]) / 2000.0
 	assert_almost_equal(est[0], true[0], 1)
 	assert_almost_equal(est[1], true[1], 1)
 
