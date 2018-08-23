@@ -17,8 +17,9 @@ except:
 from .base cimport GraphModel
 from .base cimport Model
 from .base cimport State
-from .distributions cimport Distribution
-from .distributions cimport MultivariateDistribution
+
+from distributions.distributions cimport Distribution
+from distributions.distributions cimport MultivariateDistribution
 
 if sys.version_info[0] > 2:
 	xrange = range
@@ -379,7 +380,7 @@ cdef class FactorGraph( GraphModel ):
 		# We've already computed the current belief about the marginals, so
 		# we can just return that.
 		y_hat = current_distributions[marginals]
-		
+
 		for i, state in enumerate(numpy.array(self.states)[marginals]):
 			if state.name in data:
 				y_hat[i] = data[state.name]

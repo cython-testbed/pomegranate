@@ -41,7 +41,7 @@ While probability distributions are frequently used as components of more comple
     ConditionalProbabilityTable
     JointProbabilityTable
 
-While there is a large variety of univariate distributions, multivariate distributions can be made from univariate distributions by using ```IndependentComponentsDistribution``` with the assumption that each column of data is independent from the other columns (instead of being related by a covariance matrix, like in multivariate gaussians). Here is an example:
+While there are a large variety of univariate distributions, multivariate distributions can be made from univariate distributions by using ```IndependentComponentsDistribution``` with the assumption that each column of data is independent from the other columns (instead of being related by a covariance matrix, like in multivariate gaussians). Here is an example:
 
 .. code-block:: python
 
@@ -49,6 +49,8 @@ While there is a large variety of univariate distributions, multivariate distrib
     d2 = LogNormalDistribution(1, 0.3)
     d3 = ExponentialDistribution(4)
     d = IndependentComponentsDistribution([d1, d2, d3])
+
+Use MultivariateGaussianDistribution when you want the full correlation matrix within the feature vector. When you want a strict diagonal correlation (i.e no correlation or "independent"), this is achieved using IndependentComponentsDistribution with NormalDistribution for each feature. There is no implementation of spherical or other variations of correlation.
 
 Initialization
 --------------
@@ -138,10 +140,10 @@ Training can be done on weighted samples by passing an array of weights in along
         "name" :"NormalDistribution"
     }
 
-Training can also be done with inertia, where the new value will be some percentage the old value and some percentage the new value, used like `d.from_sample([5,7,8], inertia=0.5)` to indicate a 50-50 split between old and new values. 
+Training can also be done with inertia, where the new value will be some percentage the old value and some percentage the new value, used like `d.from_samples([5,7,8], inertia=0.5)` to indicate a 50-50 split between old and new values. 
 
 API Reference
 -------------
 
 .. automodule:: pomegranate.distributions
-   :members: Distribution
+   :members: BernoulliDistribution,BetaDistribution,ConditionalProbabilityTable,DirichletDistribution,DiscreteDistribution,ExponentialDistribution,GammaDistribution,IndependentComponentsDistribution,JointProbabilityTable,KernelDensities,LogNormalDistribution,MultivariateGaussianDistribution,NormalDistribution,PoissonDistribution,UniformDistribution

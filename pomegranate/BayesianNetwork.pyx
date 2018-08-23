@@ -20,11 +20,13 @@ from libc.string cimport memset
 from .base cimport GraphModel
 from .base cimport Model
 from .base cimport State
-from .distributions import Distribution
-from .distributions cimport MultivariateDistribution
-from .distributions cimport DiscreteDistribution
-from .distributions cimport ConditionalProbabilityTable
-from .distributions cimport JointProbabilityTable
+
+from distributions import Distribution
+from distributions.distributions cimport MultivariateDistribution
+from distributions.DiscreteDistribution cimport DiscreteDistribution
+from distributions.ConditionalProbabilityTable cimport ConditionalProbabilityTable
+from distributions.JointProbabilityTable cimport JointProbabilityTable
+
 from .FactorGraph import FactorGraph
 from .utils cimport _log
 from .utils cimport lgamma
@@ -32,6 +34,7 @@ from .utils cimport isnan
 from .utils import PriorityQueue
 from .utils import plot_networkx
 from .utils import parallelize_function
+from .utils import _check_nan
 
 
 try:
@@ -54,15 +57,6 @@ DEF NEGINF = float("-inf")
 
 nan = numpy.nan
 
-def _check_nan(X):
-	if isinstance(X, str):
-		if X == 'nan':
-			return True
-		return False
-
-	if X is None or numpy.isnan(X):
-		return True
-	return False
 
 def _check_input(X, model):
 	"""Ensure that the keys in the sample are valid keys.
@@ -73,7 +67,7 @@ def _check_input(X, model):
 
 	Parameters
 	----------
-	X : dict or array-like 
+	X : dict or array-like
 		The observed sample.
 
 	states : list
@@ -93,7 +87,7 @@ def _check_input(X, model):
 					raise ValueError("State '{}' does not match with keys provided."
 						.format(name))
 				continue
-			
+
 			if name not in indices:
 				raise ValueError("Model does not contain a state named '{}'"
 					.format(name))
@@ -110,7 +104,7 @@ def _check_input(X, model):
 						raise ValueError("State '{}' does not match with keys provided."
 							.format(name))
 					continue
-				
+
 				if name not in indices:
 					raise ValueError("Model does not contain a state named '{}'"
 						.format(name))
@@ -365,7 +359,8 @@ cdef class BayesianNetwork(GraphModel):
 		indices = {state.distribution : i for i, state in enumerate(self.states)}
 
 		n, self.idxs = 0, []
-		self.keymap = numpy.array([state.distribution.keys() for state in self.states])
+		self.keymap = numpy.array([state.distribution.keys() for state in self.states], dtype=object)
+
 		for i, state in enumerate(self.states):
 			d = state.distribution
 
@@ -454,7 +449,7 @@ cdef class BayesianNetwork(GraphModel):
 
 			with Parallel(n_jobs=n_jobs) as parallel:
 				logp_arrays = parallel(delayed(parallelize_function)(
-					X[start:end], BayesianNetwork, 'log_probability', fn) 
+					X[start:end], BayesianNetwork, 'log_probability', fn)
 					for start, end in zip(starts, ends))
 
 			os.remove(fn)
@@ -485,6 +480,7 @@ cdef class BayesianNetwork(GraphModel):
 
 				(<Model> self.distributions_ptr[j])._log_probability(sym, &logp, 1)
 				log_probability[i] += logp
+		free(sym)
 
 
 	def marginal(self):
@@ -608,9 +604,9 @@ cdef class BayesianNetwork(GraphModel):
 		if isinstance(X, dict):
 			return self.graph.predict_proba(X, max_iterations)
 
-		elif isinstance(X, (list, numpy.ndarray)) and not isinstance(X[0], 
+		elif isinstance(X, (list, numpy.ndarray)) and not isinstance(X[0],
 			(list, numpy.ndarray, dict)):
-			
+
 			data = {}
 			for state, val in zip(self.states, X):
 				if not _check_nan(val):
@@ -630,7 +626,7 @@ cdef class BayesianNetwork(GraphModel):
 				with Parallel(n_jobs=n_jobs) as parallel:
 					y_hat = parallel(delayed(parallelize_function)(
 						X[start:end], BayesianNetwork, 'predict_proba', fn,
-						check_input=False) 
+						check_input=False)
 						for start, end in zip(starts, ends))
 
 				os.remove(fn)
@@ -639,14 +635,14 @@ cdef class BayesianNetwork(GraphModel):
 			else:
 				y_hat = []
 				for x in X:
-					y_ = self.predict_proba(x, max_iterations=max_iterations, 
+					y_ = self.predict_proba(x, max_iterations=max_iterations,
 						check_input=False, n_jobs=1)
 					y_hat.append(y_)
 
 				return y_hat
 
 
-	def fit(self, X, weights=None, inertia=0.0, pseudocount=0.0, verbose=False, 
+	def fit(self, X, weights=None, inertia=0.0, pseudocount=0.0, verbose=False,
 		n_jobs=1):
 		"""Fit the model to data using MLE estimates.
 
@@ -680,7 +676,7 @@ cdef class BayesianNetwork(GraphModel):
 			Whether or not to print out improvement information over
 			iterations. Only required if doing semisupervised learning.
 			Default is False.
-	
+
 		n_jobs : int
 			The number of jobs to use to parallelize, either the number of threads
 			or the number of processes to use. -1 means use all available resources.
@@ -705,7 +701,7 @@ cdef class BayesianNetwork(GraphModel):
 		with Parallel(n_jobs=n_jobs, backend='threading') as parallel:
 			parallel( delayed(self.summarize, check_pickle=False)(
 				X[start:end], weights[start:end]) for start, end in zip(starts, ends))
-		
+
 		self.from_summaries(inertia, pseudocount)
 		self.bake()
 
@@ -880,7 +876,7 @@ cdef class BayesianNetwork(GraphModel):
 		return model
 
 	@classmethod
-	def from_structure(cls, X, structure, weights=None, pseudocount=0.0, 
+	def from_structure(cls, X, structure, weights=None, pseudocount=0.0,
 		name=None, state_names=None, n_jobs=1):
 		"""Return a Bayesian network from a predefined structure.
 
@@ -995,7 +991,7 @@ cdef class BayesianNetwork(GraphModel):
 		algorithm : str, one of 'chow-liu', 'greedy', 'exact', 'exact-dp' optional
 			The algorithm to use for learning the Bayesian network. Default is
 			'greedy' that greedily attempts to find the best structure, and
-			frequently can identify the optimal structure. 'exact' uses DP/A* 
+			frequently can identify the optimal structure. 'exact' uses DP/A*
 			to find the optimal Bayesian network, and 'exact-dp' tries to find
 			the shortest path on the entire order lattice, which is more memory
 			and computationally expensive. 'exact' and 'exact-dp' should give
@@ -1037,9 +1033,9 @@ cdef class BayesianNetwork(GraphModel):
 			will pass in a dataset that has many identical samples. It is time
 			consuming to go through these redundant samples and a far more
 			efficient use of time to simply calculate a new dataset comprised
-			of the subset of unique observed samples weighted by the number of 
+			of the subset of unique observed samples weighted by the number of
 			times they occur in the dataset. This typically will speed up all
-			algorithms, including when using a constraint graph. Default is 
+			algorithms, including when using a constraint graph. Default is
 			True.
 
 		n_jobs : int, optional
@@ -1058,20 +1054,7 @@ cdef class BayesianNetwork(GraphModel):
 		X = numpy.array(X)
 		n, d = X.shape
 
-		keys = [numpy.unique(X[:,i]) for i in range(d)]
-
-		for i in range(d):
-			keys_ = []
-			for key in keys[i]:
-				if isinstance(key, str) and key == 'nan':
-					continue
-				elif numpy.isnan(key):
-					continue
-				
-				keys_.append(key)
-
-			keys[i] = keys_
-
+		keys = [set([x for x in X[:,i] if not _check_nan(x)]) for i in range(d)]
 		keymap = numpy.array([{key: i for i, key in enumerate(keys[j])} for j in range(d)])
 		key_count = numpy.array([len(keymap[i]) for i in range(d)], dtype='int32')
 
@@ -1091,13 +1074,14 @@ cdef class BayesianNetwork(GraphModel):
 					X_count[x] = weight
 
 			weights = numpy.array(list(X_count.values()), dtype='float64')
-			X = numpy.array(list(X_count.keys()))
+			X = numpy.array(list(X_count.keys()), dtype=X.dtype)
 			n, d = X.shape
+
 
 		X_int = numpy.zeros((n, d), dtype='float64')
 		for i in range(n):
 			for j in range(d):
-				if X[i, j] == 'nan' or isnan(X[i, j]):
+				if _check_nan(X[i, j]):
 					X_int[i, j] = nan
 				else:
 					X_int[i, j] = keymap[j][X[i, j]]
@@ -1128,7 +1112,7 @@ cdef class BayesianNetwork(GraphModel):
 		else:
 			raise ValueError("Invalid algorithm type passed in. Must be one of 'chow-liu', 'exact', 'exact-dp', 'greedy'")
 
-		return BayesianNetwork.from_structure(X, structure, weights, pseudocount, name, 
+		return BayesianNetwork.from_structure(X, structure, weights, pseudocount, name,
 			state_names)
 
 
@@ -1141,7 +1125,7 @@ cdef class ParentGraph(object):
 	score for each combination of parent variables. For example, if we are
 	generating a parent graph for x1 over x2, x3, and x4, we may calculate that
 	having x2 as a parent is better than x2,x3 and so store the value
-	of x2 in the node for x2,x3. 
+	of x2 in the node for x2,x3.
 
 	Parameters
 	----------
@@ -1227,7 +1211,7 @@ cdef class ParentGraph(object):
 		m[l+2] = m[l] * (key_count[self.i] - 1)
 
 		with nogil:
-			score = discrete_score_node(X, weights, m, parents, self.n, 
+			score = discrete_score_node(X, weights, m, parents, self.n,
 				l+1, self.d, self.pseudocount)
 
 		return score
@@ -1240,7 +1224,7 @@ cdef class ParentGraph(object):
 			best_parents, best_score = (), NEGINF
 		else:
 			best_parents, best_score = value, self.calculate_value(value)
-		
+
 		for variable in value:
 			parent_subset = tuple(parent for parent in value if parent != variable)
 			parents, score = self[parent_subset]
@@ -1406,7 +1390,7 @@ def discrete_exact_with_constraints(numpy.ndarray X, numpy.ndarray weights,
 
 	with Parallel(n_jobs=n_jobs, backend='threading') as parallel:
 		local_structures = parallel( delayed(discrete_exact_with_constraints_task)(
-			X, weights, key_count, pseudocount, max_parents, task, n_jobs) 
+			X, weights, key_count, pseudocount, max_parents, task, n_jobs)
 			for task in tasks)
 
 	structure = [[] for i in range(d)]
@@ -1481,7 +1465,7 @@ def discrete_exact_with_constraints_task(numpy.ndarray X, numpy.ndarray weights,
 			structure[parent] = tuple([parents[k] for k in local_structure[i]])
 
 	elif case == 1:
-		structure = discrete_exact_slap(X, weights, task, key_count, 
+		structure = discrete_exact_slap(X, weights, task, key_count,
 			pseudocount, max_parents, n_jobs)
 
 	elif case == 2:
@@ -1501,7 +1485,7 @@ def discrete_exact_dp(X, weights, key_count, pseudocount, max_parents, n_jobs):
 	"""
 	Find the optimal graph over a set of variables with no other knowledge.
 
-	This is the naive dynamic programming structure learning task where the 
+	This is the naive dynamic programming structure learning task where the
 	optimal graph is identified from a set of variables using an order graph
 	and parent graphs. This can be used either when no constraint graph is
 	provided or for a SCC which is made up of a node containing a self-loop.
@@ -1542,8 +1526,8 @@ def discrete_exact_dp(X, weights, key_count, pseudocount, max_parents, n_jobs):
 	cdef int i, n = X.shape[0], d = X.shape[1]
 	cdef list parent_graphs = []
 
-	parent_graphs = Parallel(n_jobs=n_jobs, backend='threading')( 
-		delayed(generate_parent_graph)(X, weights, key_count, i, pseudocount, 
+	parent_graphs = Parallel(n_jobs=n_jobs, backend='threading')(
+		delayed(generate_parent_graph)(X, weights, key_count, i, pseudocount,
 			max_parents) for i in range(d) )
 
 	order_graph = nx.DiGraph()
@@ -1577,14 +1561,14 @@ def discrete_exact_a_star(X, weights, key_count, pseudocount, max_parents, n_job
 	"""
 	Find the optimal graph over a set of variables with no other knowledge.
 
-	This is the naive dynamic programming structure learning task where the 
+	This is the naive dynamic programming structure learning task where the
 	optimal graph is identified from a set of variables using an order graph
 	and parent graphs. This can be used either when no constraint graph is
 	provided or for a SCC which is made up of a node containing a self-loop.
 	It uses DP/A* in order to find the optimal graph without considering all
-	possible topological sorts. A greedy version of the algorithm can be used 
-	that massively reduces both the computational and memory cost while frequently 
-	producing the optimal graph. 
+	possible topological sorts. A greedy version of the algorithm can be used
+	that massively reduces both the computational and memory cost while frequently
+	producing the optimal graph.
 
 	Parameters
 	----------
@@ -1668,14 +1652,14 @@ def discrete_greedy(X, weights, key_count, pseudocount, max_parents, n_jobs):
 	"""
 	Find the optimal graph over a set of variables with no other knowledge.
 
-	This is the naive dynamic programming structure learning task where the 
+	This is the naive dynamic programming structure learning task where the
 	optimal graph is identified from a set of variables using an order graph
 	and parent graphs. This can be used either when no constraint graph is
 	provided or for a SCC which is made up of a node containing a self-loop.
 	It uses DP/A* in order to find the optimal graph without considering all
-	possible topological sorts. A greedy version of the algorithm can be used 
-	that massively reduces both the computational and memory cost while frequently 
-	producing the optimal graph. 
+	possible topological sorts. A greedy version of the algorithm can be used
+	that massively reduces both the computational and memory cost while frequently
+	producing the optimal graph.
 
 	Parameters
 	----------
@@ -1737,7 +1721,7 @@ def discrete_greedy(X, weights, key_count, pseudocount, max_parents, n_jobs):
 
 	return tuple(structure)
 
-def discrete_exact_slap(X, weights, task, key_count, pseudocount, max_parents, 
+def discrete_exact_slap(X, weights, task, key_count, pseudocount, max_parents,
 	n_jobs):
 	"""
 	Find the optimal graph in a node with a Self Loop And Parents (SLAP).
@@ -1786,8 +1770,8 @@ def discrete_exact_slap(X, weights, task, key_count, pseudocount, max_parents,
 	cdef int i, n = X.shape[0], d = X.shape[1]
 	cdef list parent_graphs = [None for i in range(max(parents)+1)]
 
-	graphs = Parallel(n_jobs=n_jobs, backend='threading')( 
-		delayed(generate_parent_graph)(X, weights, key_count, i, pseudocount, 
+	graphs = Parallel(n_jobs=n_jobs, backend='threading')(
+		delayed(generate_parent_graph)(X, weights, key_count, i, pseudocount,
 			max_parents) for i in children)
 
 	for i, child in enumerate(children):
@@ -1820,7 +1804,7 @@ def discrete_exact_slap(X, weights, task, key_count, pseudocount, max_parents,
 	return tuple(structure)
 
 
-def discrete_exact_component(X, weights, task, key_count, pseudocount, 
+def discrete_exact_component(X, weights, task, key_count, pseudocount,
 	max_parents, n_jobs):
 	"""
 	Find the optimal graph over a multi-node component of the constaint graph.
@@ -1829,7 +1813,7 @@ def discrete_exact_component(X, weights, task, key_count, pseudocount,
 	all possible single children for that entry recursively until completion.
 	This will result in a far sparser order graph than before. In addition, one
 	can eliminate entries from the parent graphs that contain invalid parents
-	as they are a fast of computational time. 
+	as they are a fast of computational time.
 
 	Parameters
 	----------
@@ -1885,8 +1869,8 @@ def discrete_exact_component(X, weights, task, key_count, pseudocount,
 		for parent in parents:
 			child_sets[parent] += children
 
-	graphs = Parallel(n_jobs=n_jobs, backend='threading')( 
-		delayed(generate_parent_graph)(X, weights, key_count, child, pseudocount, 
+	graphs = Parallel(n_jobs=n_jobs, backend='threading')(
+		delayed(generate_parent_graph)(X, weights, key_count, child, pseudocount,
 			max_parents, parents) for child, parents in parent_sets.items())
 
 	parent_graphs = [None for i in range(d)]
@@ -1908,10 +1892,10 @@ def discrete_exact_component(X, weights, task, key_count, pseudocount,
 		last_layer.append((variable,))
 		last_layer_children.append(set(child_sets[variable]))
 
-	layer = [] 
+	layer = []
 	layer_children = []
 
-	seen_entries = {(variable,): 1 for variable in variable_set} 
+	seen_entries = {(variable,): 1 for variable in variable_set}
 
 	for i in range(len(variable_set)-1):
 		for parent_entry, child_set in zip(last_layer, last_layer_children):
@@ -1965,7 +1949,7 @@ def generate_parent_graph(numpy.ndarray X_ndarray,
 	score for each combination of parent variables. For example, if we are
 	generating a parent graph for x1 over x2, x3, and x4, we may calculate that
 	having x2 as a parent is better than x2,x3 and so store the value
-	of x2 in the node for x2,x3. 
+	of x2 in the node for x2,x3.
 
 	Parameters
 	----------
@@ -2079,7 +2063,7 @@ cdef discrete_find_best_parents(numpy.ndarray X_ndarray,
 			m[k+2] = m[k] * (key_count[i] - 1)
 
 			with nogil:
-				score = discrete_score_node(X, weights, m, combs, n, k+1, l, 
+				score = discrete_score_node(X, weights, m, combs, n, k+1, l,
 					pseudocount)
 
 			if score > best_score:
@@ -2090,7 +2074,7 @@ cdef discrete_find_best_parents(numpy.ndarray X_ndarray,
 	free(combs)
 	return best_score, best_parents
 
-cdef double discrete_score_node(double* X, double* weights, int* m, int* parents, 
+cdef double discrete_score_node(double* X, double* weights, int* m, int* parents,
 	int n, int d, int l, double pseudocount) nogil:
 	cdef int i, j, k, idx, is_na
 	cdef double w_sum = 0
@@ -2112,7 +2096,7 @@ cdef double discrete_score_node(double* X, double* weights, int* m, int* parents
 				idx += <int> X[i*l+k] * m[j]
 
 		k = parents[d-1]
-		
+
 		if is_na == 1 or isnan(X[i*l+k]):
 			continue
 

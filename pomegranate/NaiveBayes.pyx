@@ -10,13 +10,16 @@ cimport numpy
 
 from .base cimport Model
 from .bayes cimport BayesModel
-from .distributions cimport Distribution
-from .distributions import DiscreteDistribution
-from .distributions import IndependentComponentsDistribution
-from .distributions import MultivariateGaussianDistribution
-from .distributions import DirichletDistribution
+
+from distributions.distributions cimport Distribution
+from distributions import DiscreteDistribution
+from distributions import IndependentComponentsDistribution
+from distributions import MultivariateGaussianDistribution
+from distributions import DirichletDistribution
+
 from .gmm import GeneralMixtureModel
 from .utils import _convert
+from .callbacks import History
 
 from joblib import Parallel
 from joblib import delayed
@@ -80,7 +83,7 @@ cdef class NaiveBayes(BayesModel):
 		nb = {
 			'class' : 'NaiveBayes',
 			'models' : [json.loads(model.to_json()) for model in self.distributions],
-			'weights' : self.weights.tolist()
+			'weights' : numpy.exp(self.weights).tolist()
 		}
 
 		return json.dumps(nb, separators=separators, indent=indent)
@@ -109,13 +112,13 @@ cdef class NaiveBayes(BayesModel):
 	@classmethod
 	def from_samples(self, distributions, X, y, weights=None,
 		pseudocount=0.0, stop_threshold=0.1, max_iterations=1e8,
-		verbose=False, n_jobs=1):
+		callbacks=[], return_history=False, verbose=False, n_jobs=1):
 		"""Create a naive Bayes classifier directly from the given dataset.
 
 		This will initialize the distributions using maximum likelihood estimates
 		derived by partitioning the dataset using the label vector. If any labels
 		are missing, the model will be trained using EM in a semi-supervised
-		setting. 
+		setting.
 
 		A homogeneous model can be defined by passing in a single distribution
 		callable as the first parameter and specifying the number of components,
@@ -124,8 +127,8 @@ cdef class NaiveBayes(BayesModel):
 
 		A naive Bayes classifier is a subrset of the Bayes classifier in that
 		the math is identical, but the distributions are independent for each
-		feature. Simply put, one can create a multivariate Gaussian Bayes 
-		classifier with a full covariance matrix, but a Gaussian naive Bayes 
+		feature. Simply put, one can create a multivariate Gaussian Bayes
+		classifier with a full covariance matrix, but a Gaussian naive Bayes
 		would require a diagonal covariance matrix.
 
 		Parameters
@@ -166,6 +169,13 @@ cdef class NaiveBayes(BayesModel):
 			hit then it will terminate training, regardless of how well the
 			model is improving per iteration. Only required if doing
 			semisupervised learning. Default is 1e8.
+
+        callbacks : list, optional
+            A list of callback objects that describe functionality that should
+            be undertaken over the course of training.
+
+        return_history : bool, optional
+            Whether to return the history during training as well as the model.
 
 		verbose : bool, optional
 			Whether or not to print out improvement information over
@@ -210,7 +220,10 @@ cdef class NaiveBayes(BayesModel):
 				distributions = [distribution.blank() for distribution in distributions]
 
 		model = NaiveBayes(distributions)
-		model.fit(X, y, weights=weights, pseudocount=pseudocount,
+		_, history = model.fit(X, y, weights=weights, pseudocount=pseudocount,
 			stop_threshold=stop_threshold, max_iterations=max_iterations,
-			verbose=verbose, n_jobs=n_jobs)
+			verbose=verbose, callbacks=callbacks, return_history=True, n_jobs=n_jobs)
+
+		if return_history:
+			return model, history
 		return model

@@ -5,6 +5,93 @@
 Release History
 ===============
 
+Version 0.10.0
+==============
+
+Highlights
+----------
+
+	- Broke distributions into their own files and placed them in their own folder
+	- Fixed Bayesian network failing in call to np.isnan when fitting to character data
+	- Added in callbacks to all models in the style of keras, with built-ins being History, ModelCheckpoint, and CVLogger. History is calculated for each model. Use `return_history=True` to gt the model and the history object that contains training.
+	- Added top-level Makefile for convenience in development to build/test/clean/install/uninstall with multiple conda environments.
+	- Added top-level rebuildconda for convenience in development to create or re-create a conda development environment for a given python version, defaulting to 2.7.
+
+Changelog
+---------
+
+Callbacks
+---------
+
+	- Added in a callbacks module, and the use of callbacks in all iterative training procedures. Callbacks are called at the beginning of training, at the end of each epoch, and at the end of the training procedure, using the respective functions. See the documentation page for more details.
+
+
+Distributions
+-------------
+	
+	- Broke the distributions.pyx into a folder where each distribution has its own file. This will speed up compilation when the code is modified.
+
+	- Added in a `dtype` attribute to DiscreteDistribution, ConditionalProbabilityTable, and JointProbabilityTable, to prevent automatic casting of keys as floats when converting to and from jsons
+
+	- For MultivariateGaussianDistributions, added in an epsilon when performing a ridge adjustment on a non-positive semidefinite matrix to hopefully completely fix this issue.
+
+	- NormalDistribution update should now check to see if the weights are below an epsilon, rather than equal to 0, resolving some stability issues.
+
+	- Fixed an issue with BernoulliDistribution where it would raise a ZeroDivisionError when `from_summaries` was called with no observations.
+
+	- Fixed an issue where an IndependentComponentsDistribution would print upon calls to `log_probability`
+
+
+HiddenMarkovModel
+-----------------
+
+    - Changed the output to be the fit model, like in scikit-learn, instead of the total improvement, to allow for chaining
+
+	- Added in callback functionality to both the `fit` and `from_samples` methods
+
+	- Added in the `return_history` parameter to both the `fit` and `from_samples` methods, which will return the history callback as well as the fit model
+
+	- Resolved an issue in the `summary` method where default weights were assigned to the wrong variable when not passed in.
+
+	- Resolved an issue where printing an empty model resulted in an error.
+
+GeneralMixtureModel
+-------------------
+
+    - Changed the output to be the fit model, like in scikit-learn, instead of the total improvement, to allow for chaining
+
+	- Added in callback functionality to both the `fit` and `from_samples` methods
+
+	- Added in the `return_history` parameter to both the `fit` and `from_samples` methods, which will return the history callback as well as the fit model
+
+
+NaiveBayes
+----------
+
+	- Added in callback functionality to both the `fit` and `from_samples` methods that will be used only in semi-supervised learning
+
+	- Added in the `return_history` parameter to both the `fit` and `from_samples` methods, which will return the history callback as well as the fit model that will be used only in semi-supervised learning
+
+
+BayesClassifier
+---------------
+
+	- Added in callback functionality to both the `fit` and `from_samples` methods that will be used only in semi-supervised learning
+
+	- Added in the `return_history` parameter to both the `fit` and `from_samples` methods, which will return the history callback as well as the fit model that will be used only in semi-supervised learning
+
+
+BayesianNetwork
+---------------
+
+	- Modified the built keymap to be a numpy array of objects to prevent casting of all keys as the type of the first column.
+
+Makefile
+---------------
+
+	- There is a new top-level "convenience" Makefile for development to make it easy to develop with two conda environments.  The default is for two conda environments, py2.7 and py3.6, but those could be overridden at run time with, for example, `make PY3_ENV=py3.6.2 biginstall`.  Targets exist for `install, test, bigclean, and nbtest` along with variations of each that first activate either one or both conda environments.  For example, `make biginstall` will install for both `py2.7` and `py3.6` environments.  When developing pomegranate, one frequently wants to do a fully clean build, wipe out all installed targets, and replace them.  This can be done with `make bigclean biguninstall biginstall`.  In addition, there is a target `nbtest` for testing all of the jupyter notebooks to ensure that the cells run.  See the Makefile for a list of additional conda packages to install for this to work.  The default is to stop on first error but you can run `make ALLOW_ERRORS=--allow-errors nbtest` to run all cells and then inspect the html output manually for errors.
+	- There is a new top-level "convenience" rebuildconda script which will remove and create a conda environment for development.  Be careful using it that the environment you want to rebuild is the right one.  You can list environments with `conda info --envs`.  The default is to rebuild the `2.7` environment with name `py2.7`.  With this, you can create an alternative environment, test it out, and remove it as in `./rebuildconda 2.7.9 ; make PY2_ENV=py2.7.9 bigclean py2build py2test py2install nbtest ; source deactivate ; conda env remove --name py2.7.9`.
+
 Version 0.9.0
 =============
 
@@ -99,6 +186,8 @@ Base
 ----
 	
 	- Parameters `column_idx` and `d` have been added to the `_summarize` method that all models expose. This is only useful for univariate distributions and models that fit univariate distributions and can be ignored by other models. The `column_idx` parameter specifies which column in a data matrix the distribution should be fit to, essentially serving as an offset. `d` refers to the number of dimensions that the data matrix has. This means that a univariate distribution will fit to all samples `i` such that `i*d + column_idx` in a pointer array. Multivariate distributions and models using those can ignore this.
+
+	- A convenience function `to_yaml` was added to `State` and `Model` classes.  `YAML` is a superset of `JSON` that can be 4 to 5 times more compact.  You need the `yaml` package installed to use it.
 
 
 Distributions

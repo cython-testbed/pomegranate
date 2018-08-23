@@ -1,8 +1,8 @@
 #cython: boundscheck=False
 #cython: cdivision=True
 # hmm.pyx: Yet Another Hidden Markov Model library
-# Contact: Jacob Schreiber (jmschreiber91@gmail.com)
-#          Adam Novak (anovak1@ucsc.edu)
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+#          Adam Novak <anovak1@ucsc.edu>
 
 from __future__ import print_function
 
@@ -18,10 +18,14 @@ import time
 from .base cimport GraphModel
 from .base cimport Model
 from .base cimport State
-from .distributions cimport Distribution
-from .distributions cimport DiscreteDistribution
-from .distributions cimport IndependentComponentsDistribution
+
+from distributions.distributions cimport Distribution
+from distributions import MultivariateDistribution
+from distributions.DiscreteDistribution cimport DiscreteDistribution
+from distributions.IndependentComponentsDistribution cimport IndependentComponentsDistribution
 from .kmeans import Kmeans
+
+from .callbacks import History
 
 from .utils cimport _log
 from .utils cimport pair_lse
@@ -635,7 +639,7 @@ cdef class HiddenMarkovModel(GraphModel):
         self.end = other.end
 
     def draw(self, **kwargs):
-        raise ValueError("depricated. Please use .plot")
+        raise ValueError("deprecated. Please use .plot")
 
     def plot(self, precision=4, **kwargs):
         """Draw this model's graph using NetworkX and matplotlib.
@@ -2132,7 +2136,7 @@ cdef class HiddenMarkovModel(GraphModel):
         path[length] = py
 
         for i in range((length + 1) / 2):
-            path[i], path[length-i] = path[length-i], path[i] 
+            path[i], path[length-i] = path[length-i], path[i]
 
         free(tracebackx)
         free(tracebacky)
@@ -2215,7 +2219,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
         return r_ndarray
 
-    cdef void _predict_log_proba(self, double* sequence, double* r, int n, 
+    cdef void _predict_log_proba(self, double* sequence, double* r, int n,
         double* emissions) nogil:
         cdef int i, k, l, li
         cdef int m = self.n_states, dim = self.d
@@ -2363,17 +2367,17 @@ cdef class HiddenMarkovModel(GraphModel):
 
         return log_probability_sum, path
 
-    def fit(self, sequences, weights=None, labels=None, stop_threshold=1E-9, 
-        min_iterations=0, max_iterations=1e8, algorithm='baum-welch', 
-        pseudocount=None, transition_pseudocount=0, emission_pseudocount=0.0, 
-        use_pseudocount=False, inertia=None, edge_inertia=0.0, 
-        distribution_inertia=0.0, batch_size=None, batches_per_epoch=None, 
-        lr_decay=0.0, verbose=False, n_jobs=1):
+    def fit(self, sequences, weights=None, labels=None, stop_threshold=1E-9,
+        min_iterations=0, max_iterations=1e8, algorithm='baum-welch',
+        pseudocount=None, transition_pseudocount=0, emission_pseudocount=0.0,
+        use_pseudocount=False, inertia=None, edge_inertia=0.0,
+        distribution_inertia=0.0, batch_size=None, batches_per_epoch=None,
+        lr_decay=0.0, callbacks=[], return_history=False, verbose=False, n_jobs=1):
         """Fit the model to data using either Baum-Welch, Viterbi, or supervised training.
 
         Given a list of sequences, performs re-estimation on the model
         parameters. The two supported algorithms are "baum-welch", "viterbi",
-        and "labeled", indicating their respective algorithm. "labeled" 
+        and "labeled", indicating their respective algorithm. "labeled"
         corresponds to supervised learning that requires passing in a matching
         list of labels for each symbol seen in the sequences.
 
@@ -2425,7 +2429,7 @@ cdef class HiddenMarkovModel(GraphModel):
         pseudocount : double, optional
             A pseudocount to add to both transitions and emissions. If supplied,
             it will override both transition_pseudocount and emission_pseudocount
-            in the same way that specifying `inertia` will override both 
+            in the same way that specifying `inertia` will override both
             `edge_inertia` and `distribution_inertia`. Default is None.
 
         transition_pseudocount : double, optional
@@ -2475,11 +2479,18 @@ cdef class HiddenMarkovModel(GraphModel):
         lr_decay : double, optional, positive
             The step size decay as a function of the number of iterations.
             Functionally, this sets the inertia to be (2+k)^{-lr_decay}
-            where k is the number of iterations. This causes initial 
+            where k is the number of iterations. This causes initial
             iterations to have more of an impact than later iterations,
             and is frequently used in minibatch learning. This value is
             suggested to be between 0.5 and 1. Default is 0, meaning no
             decay.
+
+        callbacks : list, optional
+            A list of callback objects that describe functionality that should
+            be undertaken over the course of training.
+
+        return_history : bool, optional
+            Whether to return the history during training as well as the model.
 
         verbose : bool, optional
             Whether to print the improvement in the model fitting at each
@@ -2557,21 +2568,23 @@ cdef class HiddenMarkovModel(GraphModel):
         n_seen_batches = 0
         epoch_starts, epoch_ends = None, None
 
+        callbacks = [History()] + callbacks
+        for callback in callbacks:
+            callback.model = self
+            callback.on_training_begin()
+
         with Parallel(n_jobs=n_jobs, backend='threading') as parallel:
             while improvement > stop_threshold or iteration < min_iterations + 1:
                 epoch_start_time = time.time()
 
-                if inertia is None:
-                    step_size = None
-                else:
-                    step_size = 1 - ((1 - inertia) * (2 + iteration) ** -lr_decay) 
-                
+                step_size = None if inertia is None else 1 - ((1 - inertia) * (2 + iteration) ** -lr_decay)
+
                 self.from_summaries(step_size, pseudocount, transition_pseudocount,
                     emission_pseudocount, use_pseudocount,
                     edge_inertia, distribution_inertia)
 
                 if epoch_starts is not None and minibatching:
-                    updated_log_probability_sum = sum(self.log_probability(X[i]) 
+                    updated_log_probability_sum = sum(self.log_probability(X[i])
                         for i in range(epoch_starts[0], epoch_ends[-1]))
                     improvement = updated_log_probability_sum - log_probability_sum
 
@@ -2586,42 +2599,62 @@ cdef class HiddenMarkovModel(GraphModel):
                     break
 
                 if semisupervised:
-                    log_probability_sum = sum(parallel(delayed(self.summarize, 
-                        check_pickle=False)(X_labeled[start:end], 
-                        weights_labeled[start:end], labels[start:end], 
-                        algorithm='labeled', check_input=False) 
+                    log_probability_sum = sum(parallel(delayed(self.summarize,
+                        check_pickle=False)(X_labeled[start:end],
+                        weights_labeled[start:end], labels[start:end],
+                        algorithm='labeled', check_input=False)
                         for start, end in zip(starts_labeled, ends_labeled)))
 
-                    log_probability_sum += sum(parallel(delayed(self.summarize, 
-                        check_pickle=False)(X_unlabeled[start:end], 
-                        weights_unlabeled[start:end], algorithm=algorithm, 
-                        check_input=False) 
+                    log_probability_sum += sum(parallel(delayed(self.summarize,
+                        check_pickle=False)(X_unlabeled[start:end],
+                        weights_unlabeled[start:end], algorithm=algorithm,
+                        check_input=False)
                         for start, end in zip(starts_unlabeled, ends_unlabeled)))
 
                 elif labels is not None:
-                    log_probability_sum = sum(parallel(delayed(self.summarize, check_pickle=False)(X[start:end], 
-                        weights[start:end], labels[start:end], alg, False) 
+                    log_probability_sum = sum(parallel(delayed(self.summarize, check_pickle=False)(X[start:end],
+                        weights[start:end], labels[start:end], alg, False)
                         for start, end in zip(epoch_starts, epoch_ends)))
                 else:
-                    log_probability_sum = sum(parallel(delayed(self.summarize, check_pickle=False)(X[start:end], 
-                        weights[start:end], None, alg, False) 
+                    log_probability_sum = sum(parallel(delayed(self.summarize, check_pickle=False)(X[start:end],
+                        weights[start:end], None, alg, False)
                         for start, end in zip(epoch_starts, epoch_ends)))
 
                 if iteration == 0:
                     initial_log_probability_sum = log_probability_sum
                 else:
-                    time_spent = time.time() - epoch_start_time
+                    epoch_end_time = time.time()
+                    time_spent = epoch_end_time - epoch_start_time
+
                     if not minibatching:
                         improvement = log_probability_sum - last_log_probability_sum
-                    
+
                     if verbose:
                         print("[{}] Improvement: {}\tTime (s): {:.4}".format(
                             iteration, improvement, time_spent))
 
                     total_improvement += improvement
 
+                    logs = {'learning_rate': step_size,
+                            'n_seen_batches' : n_seen_batches,
+                            'epoch' : iteration,
+                            'improvement' : improvement,
+                            'total_improvement' : total_improvement,
+                            'log_probability' : log_probability_sum,
+                            'last_log_probability' : last_log_probability_sum,
+                            'initial_log_probability' : initial_log_probability_sum,
+                            'epoch_start_time' : epoch_start_time,
+                            'epoch_end_time' : epoch_end_time,
+                            'duration' : time_spent }
+
+                    for callback in callbacks:
+                        callback.on_epoch_end(logs)
+
                 iteration += 1
                 last_log_probability_sum = log_probability_sum
+
+        for callback in callbacks:
+            callback.on_training_end(logs)
 
         self.clear_summaries()
 
@@ -2636,9 +2669,13 @@ cdef class HiddenMarkovModel(GraphModel):
             total_training_time = time.time() - training_start_time
             print("Total Training Time (s): {:.4f}".format(total_training_time))
 
-        return log_probability_sum - initial_log_probability_sum
+        history = callbacks[0]
 
-    def summarize(self, sequences, weights=None, labels=None, algorithm='baum-welch', 
+        if return_history:
+            return self, history
+        return self
+
+    def summarize(self, sequences, weights=None, labels=None, algorithm='baum-welch',
         check_input=True):
         """Summarize data into stored sufficient statistics for out-of-core
         training. Only implemented for Baum-Welch training since Viterbi
@@ -2689,10 +2726,10 @@ cdef class HiddenMarkovModel(GraphModel):
 
         if check_input:
             if weights is None:
-                weights_ndarray = numpy.ones(len(sequences), dtype='float64')
+                weights = numpy.ones(len(sequences), dtype='float64')
             else:
-                weights_ndarray = numpy.array(weights, dtype='float64')
-        
+                weights = numpy.array(weights, dtype='float64')
+
             if labels is not None:
                 labels = numpy.array(labels)
 
@@ -2703,13 +2740,13 @@ cdef class HiddenMarkovModel(GraphModel):
             X = sequences
 
         if algorithm == 'baum-welch':
-            return sum([self._baum_welch_summarize(sequence, weight) 
+            return sum([self._baum_welch_summarize(sequence, weight)
                 for sequence, weight in zip(X, weights)])
         elif algorithm == 'viterbi':
-            return sum([self._viterbi_summarize(sequence, weight) 
+            return sum([self._viterbi_summarize(sequence, weight)
                 for sequence, weight in zip(X, weights)])
         elif algorithm == 'labeled':
-            return sum([self._labeled_summarize(sequence, label, weight) 
+            return sum([self._labeled_summarize(sequence, label, weight)
                 for sequence, label, weight in zip(X, labels, weights)])
 
     cpdef double _baum_welch_summarize(self, numpy.ndarray sequence_ndarray, double weight):
@@ -2725,7 +2762,7 @@ cdef class HiddenMarkovModel(GraphModel):
         cdef double log_sequence_probability
 
         with nogil:
-            log_sequence_probability = self._summarize(sequence, &weight, n, 
+            log_sequence_probability = self._summarize(sequence, &weight, n,
                 0, self.d)
 
         return log_sequence_probability
@@ -2896,7 +2933,7 @@ cdef class HiddenMarkovModel(GraphModel):
         free(path)
         return log_probability * weight
 
-    cpdef double _labeled_summarize(self, numpy.ndarray sequence_ndarray, 
+    cpdef double _labeled_summarize(self, numpy.ndarray sequence_ndarray,
         numpy.ndarray label_ndarray, double weight):
         """Python wrapper for the summarization step.
 
@@ -2912,20 +2949,20 @@ cdef class HiddenMarkovModel(GraphModel):
         memset(labels, -1, (n+m+1)*sizeof(int))
 
         for i in range(label_ndarray.shape[0]):
-            if isinstance(label_ndarray[i], State): 
+            if isinstance(label_ndarray[i], State):
                 labels[i] = self.states.index(label_ndarray[i])
             else:
                 labels[i] = self.state_name_mapping[label_ndarray[i]]
-            
+
 
         with nogil:
-            log_sequence_probability = self.__labeled_summarize(sequence, 
+            log_sequence_probability = self.__labeled_summarize(sequence,
                 labels, weight, n, m)
 
         free(labels)
         return self.log_probability(sequence_ndarray, check_input=False)
 
-    cdef double __labeled_summarize(self, double* sequence, int* states, 
+    cdef double __labeled_summarize(self, double* sequence, int* states,
         double weight, int n, int m) nogil:
         """Perform a re-estimation of the model parameters using labeled data.
 
@@ -2956,7 +2993,7 @@ cdef class HiddenMarkovModel(GraphModel):
                 (<Model> distributions[present])._summarize(sequence+j*self.d,
                     &weight, 1, 0, self.d)
                 j += 1
-            
+
         with gil:
             for k in range(m):
                 for l in range(out_edges[k], out_edges[k+1]):
@@ -2967,8 +3004,8 @@ cdef class HiddenMarkovModel(GraphModel):
         free(transitions)
         return 0
 
-    def from_summaries(self, inertia=None, pseudocount=None, 
-        transition_pseudocount=0.0, emission_pseudocount=0.0, 
+    def from_summaries(self, inertia=None, pseudocount=None,
+        transition_pseudocount=0.0, emission_pseudocount=0.0,
         use_pseudocount=False, edge_inertia=0.0, distribution_inertia=0.0):
         """Fit the model to the stored summary statistics.
 
@@ -2982,7 +3019,7 @@ cdef class HiddenMarkovModel(GraphModel):
         pseudocount : double, optional
             A pseudocount to add to both transitions and emissions. If supplied,
             it will override both transition_pseudocount and emission_pseudocount
-            in the same way that specifying `inertia` will override both 
+            in the same way that specifying `inertia` will override both
             `edge_inertia` and `distribution_inertia`. Default is None.
 
         transition_pseudocount : double, optional
@@ -3029,14 +3066,14 @@ cdef class HiddenMarkovModel(GraphModel):
             transition_pseudocount = pseudocount
             emission_pseudocount = pseudocount
 
-        self._from_summaries(transition_pseudocount, emission_pseudocount, 
+        self._from_summaries(transition_pseudocount, emission_pseudocount,
             use_pseudocount, edge_inertia, distribution_inertia)
 
         memset(self.expected_transitions, 0, self.n_edges*sizeof(double))
         self.summaries = 0
 
-    cdef void _from_summaries(self, double transition_pseudocount, 
-        double emission_pseudocount, bint use_pseudocount, double edge_inertia, 
+    cdef void _from_summaries(self, double transition_pseudocount,
+        double emission_pseudocount, bint use_pseudocount, double edge_inertia,
         double distribution_inertia):
         """Update the transition matrix and emission distributions."""
 
@@ -3376,14 +3413,15 @@ cdef class HiddenMarkovModel(GraphModel):
         return model
 
     @classmethod
-    def from_samples(cls, distribution, n_components, X, weights=None, 
-        labels=None, algorithm='baum-welch', inertia=None, edge_inertia=0.0, 
-        distribution_inertia=0.0, pseudocount=None, 
-        transition_pseudocount=0, emission_pseudocount=0.0, 
-        use_pseudocount=False, stop_threshold=1e-9, min_iterations=0, 
-        max_iterations=1e8, n_init=1, init='kmeans++', max_kmeans_iterations=1, 
-        batch_size=None, batches_per_epoch=None, lr_decay=0.0, end_state=False, 
-        state_names=None, name=None, verbose=False, n_jobs=1):
+    def from_samples(cls, distribution, n_components, X, weights=None,
+        labels=None, algorithm='baum-welch', inertia=None, edge_inertia=0.0,
+        distribution_inertia=0.0, pseudocount=None,
+        transition_pseudocount=0, emission_pseudocount=0.0,
+        use_pseudocount=False, stop_threshold=1e-9, min_iterations=0,
+        max_iterations=1e8, n_init=1, init='kmeans++', max_kmeans_iterations=1,
+        batch_size=None, batches_per_epoch=None, lr_decay=0.0, end_state=False,
+        state_names=None, name=None, callbacks=[], return_history=False,
+        verbose=False, n_jobs=1):
         """Learn the transitions and emissions of a model directly from data.
 
         This method will learn both the transition matrix, emission distributions,
@@ -3454,7 +3492,7 @@ cdef class HiddenMarkovModel(GraphModel):
         pseudocount : double, optional
             A pseudocount to add to both transitions and emissions. If supplied,
             it will override both transition_pseudocount and emission_pseudocount
-            in the same way that specifying `inertia` will override both 
+            in the same way that specifying `inertia` will override both
             `edge_inertia` and `distribution_inertia`. Default is None.
 
         transition_pseudocount : double, optional
@@ -3514,7 +3552,7 @@ cdef class HiddenMarkovModel(GraphModel):
         lr_decay : double, optional, positive
             The step size decay as a function of the number of iterations.
             Functionally, this sets the inertia to be (2+k)^{-lr_decay}
-            where k is the number of iterations. This causes initial 
+            where k is the number of iterations. This causes initial
             iterations to have more of an impact than later iterations,
             and is frequently used in minibatch learning. This value is
             suggested to be between 0.5 and 1. Default is 0, meaning no
@@ -3522,7 +3560,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
         end_state : bool, optional
             Whether to calculate the probability of ending in each state or not.
-            Default is False. 
+            Default is False.
 
         state_names : array-like, shape (n_states), optional
             The name of the states. If None is passed in, default names are
@@ -3530,6 +3568,13 @@ cdef class HiddenMarkovModel(GraphModel):
 
         name : str, optional
             The name of the model. Default is None
+
+        callbacks : list, optional
+            A list of callback objects that describe functionality that should
+            be undertaken over the course of training.
+
+        return_history : bool, optional
+            Whether to return the history during training as well as the model.
 
         verbose : bool, optional
             Whether to print the improvement in the model fitting at each
@@ -3547,6 +3592,7 @@ cdef class HiddenMarkovModel(GraphModel):
 
 
         X_concat = numpy.concatenate(X)
+
         if X_concat.ndim == 1:
             X_concat = X_concat.reshape(X_concat.shape[0], 1)
 
@@ -3591,7 +3637,15 @@ cdef class HiddenMarkovModel(GraphModel):
                 batch_size=batch_size, batches_per_epoch=batches_per_epoch)
             y = clf.predict(X_concat)
 
-            distributions = [distribution.from_samples(X_concat[y == i]) for i in range(n_components)]
+            if callable(distribution):
+                if X_concat.shape[1] > 1 and not isinstance(distribution.blank(), MultivariateDistribution):
+                    distribution = [distribution for i in range(X_concat.shape[1])]
+                else:
+                    distributions = [distribution.from_samples(X_concat[y == i]) for i in range(n_components)]
+
+            if isinstance(distribution, list):
+                distributions = [IndependentComponentsDistribution.from_samples(X_concat[y == i],
+                    distributions=distribution) for i in range(n_components)]
 
         transition_matrix = numpy.ones((n_components, n_components)) / n_components
         start_probabilities = numpy.ones(n_components) / n_components
@@ -3600,17 +3654,20 @@ cdef class HiddenMarkovModel(GraphModel):
         if end_state:
             end_probabilities = numpy.ones(n_components) / n_components
 
-        model = HiddenMarkovModel.from_matrix(transition_matrix, distributions, start_probabilities, 
+        model = HiddenMarkovModel.from_matrix(transition_matrix, distributions, start_probabilities,
             state_names=state_names, name=name, ends=end_probabilities)
 
-        model.fit(X, weights=weights, labels=labels, stop_threshold=stop_threshold, 
-            min_iterations=min_iterations, max_iterations=max_iterations, 
+        _, history = model.fit(X, weights=weights, labels=labels, stop_threshold=stop_threshold,
+            min_iterations=min_iterations, max_iterations=max_iterations,
             algorithm=algorithm, verbose=verbose, pseudocount=pseudocount,
-            transition_pseudocount=transition_pseudocount, 
-            emission_pseudocount=emission_pseudocount, 
+            transition_pseudocount=transition_pseudocount,
+            emission_pseudocount=emission_pseudocount,
             use_pseudocount=use_pseudocount,
-            inertia=inertia, edge_inertia=edge_inertia, 
+            inertia=inertia, edge_inertia=edge_inertia,
             distribution_inertia=distribution_inertia, batch_size=batch_size,
-            batches_per_epoch=batches_per_epoch, lr_decay=lr_decay, n_jobs=n_jobs)
+            batches_per_epoch=batches_per_epoch, lr_decay=lr_decay,
+            callbacks=callbacks, return_history=True, n_jobs=n_jobs)
 
+        if return_history:
+            return model, history
         return model
