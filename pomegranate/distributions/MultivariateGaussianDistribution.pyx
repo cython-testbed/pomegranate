@@ -24,6 +24,7 @@ from ..utils cimport mdot
 from ..utils cimport ndarray_wrap_cpointer
 from ..utils cimport _is_gpu_enabled
 from ..utils cimport isnan
+from ..utils import check_random_state
 
 from libc.math cimport sqrt as csqrt
 
@@ -137,8 +138,9 @@ cdef class MultivariateGaussianDistribution(MultivariateDistribution):
 
 		return logp
 
-	def sample(self, n=None):
-		return numpy.random.multivariate_normal(self.parameters[0],
+	def sample(self, n=None, random_state=None):
+		random_state = check_random_state(random_state)
+		return random_state.multivariate_normal(self.parameters[0],
 			self.parameters[1], n)
 
 	cdef double _summarize(self, double* X, double* weights, int n,
@@ -155,10 +157,6 @@ cdef class MultivariateGaussianDistribution(MultivariateDistribution):
 		cdef double* column_w_sum = <double*> calloc(d, sizeof(double))
 		cdef double* pair_sum
 		cdef double* pair_w_sum = <double*> calloc(d*d, sizeof(double))
-
-		memset(column_sum, 0, d*d*sizeof(double))
-		memset(column_w_sum, 0, d*sizeof(double))
-		memset(pair_w_sum, 0, d*d*sizeof(double))
 
 		cdef double* y = <double*> calloc(n*d, sizeof(double))
 		cdef double alpha = 1
@@ -201,7 +199,6 @@ cdef class MultivariateGaussianDistribution(MultivariateDistribution):
 
 		else:
 			pair_sum = <double*> calloc(d*d, sizeof(double))
-			memset(pair_sum, 0, d*d*sizeof(double))
 
 			dgemm('N', 'T', &d, &d, &n, &alpha, y, &d, y, &d, &beta, pair_sum, &d)
 

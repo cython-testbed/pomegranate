@@ -5,19 +5,171 @@
 Release History
 ===============
 
+Version 0.12.1
+==============
+
+Highlights
+----------
+
+	- A variety of minor bug fixes.
+
+
+Version 0.12.0
+==============
+
+Highlights
+----------
+
+	- MarkovNetwork models have been added in and include both inference and structure learning.
+	- Support for Python 2 has been depricated.
+	- Markov network, data generator, and callback tutorials have been added in
+	- A robust `from_json` method has been added in to __init__.py that can deserialize JSONs from any pomegranate model.
+
+MarkovNetwork
+-------------
+	
+	- MarkovNetwork models have been added in as a new probabilistic model.
+	- Loopy belief propagation inference has been added in using the FactorGraph backend
+	- Structure learning has been added in using Chow-Liu trees
+
+BayesianNetwork
+---------------
+
+	- Chow-Liu tree building has been sped up slightly, courtesy of @alexhenrie
+	- Chow-Liu tree building was further sped up by almost an order of magnitude
+	- Constraint Graphs no longer fail when passing in graphs with self loops, courtesy of @alexhenrie
+
+BayesClassifier
+---------------
+
+	- Updated the `from_samples` method to accept BayesianNetwork as an emission. This will build one Bayesian network for each class and use them as the emissions.
+
+Distributions
+-------------
+
+	- Added a warning to DiscreteDistribution when the user passes in an empty dictionary.
+	- Fixed the sampling procedure for JointProbabilityTables. 
+	- GammaDistributions should have their shape issue resolved
+	- The documentation for BetaDistributions has been updated to specify that it is a Beta-Bernoulli distribution. 
+
+io
+---
+	
+	- New file added, io.py, that contains data generators that can be operated on
+	- Added DataGenerator, DataFrameGenerator, and a BaseGenerator class to inherit from 
+
+HiddenMarkovModel
+-----------------
+
+	- Added RandomState parameter to `from_samples` to account for randomness when building discrete models.
+
+Misc
+----
+
+	- Unneccessary calls to memset have been removed, courtesy of @alexhenrie
+	- Checking for missing values has been slightly refactored to be cleaner, courtesy of @mareksmid-lucid
+	- Include the LICENSE file in MANIFEST.in and simplify a bit, courtesy of @toddrme2178
+	- Added in a robust from_json method that can be used to deseralize a JSON for any pomegranate model.
+
+docs
+----
+
+	- Added io.rst to briefly describe data generators
+	- Added MarkovNetwork.rst to describe Markov networks
+	- Added links to tutorials that did not have tutorials linked to them.
+
+Tutorials
+---------
+	
+	- Added in a tutorial notebook for Markov networks
+	- Added in a tutorial notebook for data generators
+	- Added in a tutorial notebook for callbacks
+
+CI
+--
+
+	- Removed unit tests for Py2.7 from AppVeyor and Travis
+	- Added unit tests for Py3.8 to AppVeyor and Travis 
+
+Version 0.11.2
+==============
+
+Highlights
+----------
+
+	- Faster BSNL, particularly when there is missing data, courtesy of @alexhenrie
+	- GPU acceleration should be fixed
+
+BayesianNetwork
+---------------
+
+	- A speed improvement by making `isnan` an inline function, courtesy of @alexhenrie
+	- A speed improvement by changing the manner that parent sets are iterated, courtesy of @alexhenrie
+
+Utils
+-----
+
+	- The `enable_gpu` call has been moved to the bottom of the GPU checking code and so should not crash anymore.
+
+Version 0.11.1
+==============
+
+Highlights
+----------
+
+	- Added speed improvements to Bayesian network structure learning when missing data is present.
+
+BayesianNetwork
+---------------
+
+	- By default duplicates get merged in a data set so that there are fewer rows with larger weights, dramatically improving speed. However, because `np.nan != np.nan`, rows with missing values don't get merged. This fix changes `np.nan` to `None` so that the rows get merged appropriately.
+
+	- A few misc changes that sometimes improve speed.
+
+	- Changed the probability calculation when a node is being scored given a single row. Previously it would return 0, meaning that sometimes it will return the densest graph possible erroneously. This may change your networks in edge cases, but will reduce their complexity.
+
 Version 0.11.0
 ==============
 
 Highlights
 ----------
 
+	- Allowed for user specified custom distributions by implementing a Python fallback option if the distribution object doesn't inherit from the base distribution class.
 	- Fixed an issue with GammaDistribution update
+	- Removed deterministic seed being set in hmm.bake
+	- Made pomegranate compatible with NetworkX v2.0 and above
+	- NeuralHMMs and Neural Mixture Models are now possible through the custom distributions
+	- Many new tutorials
 
 
 Distributions
 -------------
 
 	- Fixed an error in GammaDistribution's cython level update step where sufficient statistics were incorrectly collected from a data set. This will only affect GammaDistributions that are used as part of a composition model rather than stand-alone ones.
+
+	- Added in support for custom distributions. This is done by checking whether a distribution is inherited from the base pomegranate distribution object. If not, it will use the python methods. 
+
+	- Added in examples of using custom distributions, including neural networks, with pomegranate models.
+
+	- Made NormalDistribution.blank and LogNormalDistribution.blank return distributions with a standard deviation of 1, to avoid DivisionByZero errors.
+
+	- Added in a NeuralNetworkWrapper distribution that should handle wrapping a neural network correctly for use in pomegranate. This assumes a keras-like API.
+
+HiddenMarkovModel
+-----------------
+
+	- Removed a deterministic seed being set in hmm.bake. These lines were set because it was thought that there was some randomness in either the internal state generation of the topological sort. However, it appears that this is not necessary, and so it has been removed.
+
+	- Fixed a bug where semi-supervised learning would not work because of an undefined variable.
+
+	- Added in support for networkx v2.0 and above using their new API.
+
+Tutorials
+---------
+	
+	- Revamped the tutorials in the tutorials folder, greatly expanding their scope
+
+	- Added in new tutorials about custom distributions and neural probabilistic models
 
 
 Version 0.10.0

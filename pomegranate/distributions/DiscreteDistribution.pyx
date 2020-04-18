@@ -5,7 +5,6 @@
 # Contact: Jacob Schreiber <jmschreiber91@gmail.com>
 
 import numpy
-import sys
 import itertools as it
 import json
 import random
@@ -16,6 +15,8 @@ from libc.string cimport memset
 
 from ..utils cimport _log
 from ..utils cimport isnan
+from ..utils import check_random_state
+from ..utils import _check_nan
 
 from libc.math cimport sqrt as csqrt
 
@@ -23,13 +24,6 @@ from libc.math cimport sqrt as csqrt
 DEF NEGINF = float("-inf")
 DEF INF = float("inf")
 eps = numpy.finfo(numpy.float64).eps
-
-if sys.version_info[0] > 2:
-	# Set up for Python 3
-	xrange = range
-	izip = zip
-else:
-	izip = it.izip
 
 cdef class DiscreteDistribution(Distribution):
 	"""
@@ -52,6 +46,9 @@ cdef class DiscreteDistribution(Distribution):
 		sum to 1.0. Each discrete character can be modelled as a
 		Bernoulli distribution.
 		"""
+
+		if len(characters) == 0:
+			raise ValueError("Must pass in a dictionary with at least one value.")
 
 		self.name = "DiscreteDistribution"
 		self.frozen = frozen
@@ -80,6 +77,7 @@ cdef class DiscreteDistribution(Distribution):
 
 	def __mul__(self, other):
 		"""Multiply this by another distribution sharing the same keys."""
+
 		assert set(self.keys()) == set(other.keys())
 		distribution, total = {}, 0.0
 
@@ -163,19 +161,27 @@ cdef class DiscreteDistribution(Distribution):
 			self.encoded_counts[i] = 0
 			self.encoded_log_probability[i] = self.log_dist.get(key, NEGINF)
 
+	def probability(self, X):
+		"""Return the prob of the X under this distribution."""
+
+		return self.__probability(X)
+
+	cdef double __probability(self, X):
+		if _check_nan(X):
+			return 1.
+		else:
+			return self.dist.get(X, 0)
+
 	def log_probability(self, X):
 		"""Return the log prob of the X under this distribution."""
 
 		return self.__log_probability(X)
 
 	cdef double __log_probability(self, X):
-		if isinstance(X, (str, unicode)):
-			if X == 'nan':
-				return 0.
-		elif X is None or numpy.isnan(X):
+		if _check_nan(X):
 			return 0.
-
-		return self.log_dist.get(X, NEGINF)
+		else:
+			return self.log_dist.get(X, NEGINF)
 
 	cdef void _log_probability(self, double* X, double* log_probability, int n) nogil:
 		cdef int i
@@ -187,17 +193,16 @@ cdef class DiscreteDistribution(Distribution):
 			else:
 				log_probability[i] = self.encoded_log_probability[<int> X[i]]
 
-	def sample(self, n=None):
-		if n is None:
-			rand = random.random()
-			for key, value in self.items():
-				if value >= rand:
-					return key
-				rand -= value
-		else:
-			samples = [self.sample() for i in range(n)]
-			return numpy.array(samples)
+	def sample(self, n=None, random_state=None):
+		random_state = check_random_state(random_state)
 
+		keys = list(self.dist.keys())
+		probabilities = list(self.dist.values())
+
+		if n is None:
+			return random_state.choice(keys, p=probabilities)
+		else:
+			return random_state.choice(keys, p=probabilities, size=n)
 
 	def fit(self, items, weights=None, inertia=0.0, pseudocount=0.0,
 		column_idx=0):
@@ -220,11 +225,12 @@ cdef class DiscreteDistribution(Distribution):
 			weights = numpy.ones(len(items))
 		else:
 			weights = numpy.asarray(weights)
-
-		self.summaries[1] += weights.sum()
-		characters = self.summaries[0]
-		for i in xrange(len(items)):
-			characters[items[i]] += weights[i]
+			
+		for i in range(len(items)):
+			x = items[i]
+			if _check_nan(x) == False:
+				self.summaries[0][x] += weights[i]
+				self.summaries[1] += weights[i]
 
 	cdef double _summarize(self, double* items, double* weights, int n,
 		int column_idx, int d) nogil:
@@ -233,7 +239,6 @@ cdef class DiscreteDistribution(Distribution):
 		self.encoded_summary = 1
 
 		encoded_counts = <double*> calloc(self.n, sizeof(double))
-		memset(encoded_counts, 0, self.n*sizeof(double))
 
 		for i in range(n):
 			item = items[i*d + column_idx]
@@ -325,10 +330,8 @@ cdef class DiscreteDistribution(Distribution):
 		Xs = {}
 		total = 0
 
-		for X, weight in izip(items, weights):
-			if isinstance(X, str) and X == 'nan':
-				continue
-			elif isinstance(X, (int, float)) and numpy.isnan(X):
+		for X, weight in zip(items, weights):
+			if _check_nan(X):
 				continue
 
 			total += weight
@@ -347,4 +350,4 @@ cdef class DiscreteDistribution(Distribution):
 
 	@classmethod
 	def blank(cls):
-		return DiscreteDistribution({})
+		return DiscreteDistribution({'None': 1.0})

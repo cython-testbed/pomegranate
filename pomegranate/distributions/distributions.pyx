@@ -32,6 +32,7 @@ from .DirichletDistribution import DirichletDistribution
 from .ConditionalProbabilityTable import ConditionalProbabilityTable
 from .JointProbabilityTable import JointProbabilityTable
 
+from .NeuralNetworkWrapper import NeuralNetworkWrapper
 
 cdef class Distribution(Model):
 	"""A probability distribution.
@@ -286,20 +287,28 @@ cdef class Distribution(Model):
 		if d['name'] == 'IndependentComponentsDistribution':
 			d['parameters'][0] = [cls.from_json(json.dumps(dist)) for dist in d['parameters'][0]]
 			return IndependentComponentsDistribution(d['parameters'][0], d['parameters'][1], d['frozen'])
+
 		elif d['name'] == 'DiscreteDistribution':
+			dp = d['parameters'][0]
+
 			if d['dtype'] in ('str', 'unicode', 'numpy.string_'):
-				dist = {str(key) : value for key, value in d['parameters'][0].items()}
+				dist = {str(key) : value for key, value in dp.items()}
+			elif d['dtype'] == 'bool':
+				dist = {key == 'True' : value for key, value in dp.items()}
 			elif d['dtype'] == 'int':
-				dist = {int(key) : value for key, value in d['parameters'][0].items()}
+				dist = {int(key) : value for key, value in dp.items()}
 			elif d['dtype'] == 'float':
-				dist = {float(key) : value for key, value in d['parameters'][0].items()}
+				dist = {float(key) : value for key, value in dp.items()}
+			elif '.' in d['dtype']:
+				dtype = d['dtype'].split('.')[-1]
+				dist = {numpy.array([key], dtype=dtype)[0]: value for key, value in dp.items()}
 			else:
-				dist = d['parameters'][0]
+				dist = dp
 
 			return DiscreteDistribution(dist, frozen=d['frozen'])
 
 		elif 'Table' in d['name']:
-			parents = [Distribution.from_json(json.dumps(j)) for j in d['parents']]
+			parents = [j if isinstance(j, int) else Distribution.from_json(json.dumps(j)) for j in d['parents']]
 			table = []
 
 			for row in d['table']:
@@ -307,10 +316,15 @@ cdef class Distribution(Model):
 				for dtype, item in zip(d['dtypes'], row):
 					if dtype in ('str', 'unicode', 'numpy.string_'):
 						table[-1].append(str(item))
+					elif dtype == 'bool':
+						table[-1].append(item == 'True')
 					elif dtype == 'int':
 						table[-1].append(int(item))
 					elif dtype == 'float':
 						table[-1].append(float(item))
+					elif '.' in dtype:
+						dtype = dtype.split('.')[-1]
+						table[-1].append(numpy.array([item], dtype=dtype)[0])
 					else:
 						table[-1].append(item)
 
@@ -378,9 +392,6 @@ cdef class MultivariateDistribution(Distribution):
 
 		logp_array = numpy.empty(n, dtype='float64')
 		logp_ptr = <double*> logp_array.data
-
-		X_ndarray = numpy.array(X, dtype='float64')
-		X_ptr = <double*> X_ndarray.data
 
 		with nogil:
 			self._log_probability(X_ptr, logp_ptr, n)

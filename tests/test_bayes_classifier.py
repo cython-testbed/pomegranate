@@ -1,6 +1,9 @@
 from __future__ import (division)
 
 from pomegranate import *
+from pomegranate.io import DataGenerator
+from pomegranate.io import DataFrameGenerator
+
 from nose.tools import with_setup
 from nose.tools import assert_almost_equal
 from nose.tools import assert_equal
@@ -9,6 +12,8 @@ from nose.tools import assert_less_equal
 from nose.tools import assert_raises
 from nose.tools import assert_true
 from numpy.testing import assert_array_almost_equal
+
+import pandas
 import random
 import pickle
 import numpy as np
@@ -508,6 +513,26 @@ def test_bc_multivariate_mixed_to_json():
 	assert_array_almost_equal(model.weights, model2.weights)
 
 
+@with_setup(setup_multivariate_gaussian, teardown)
+def test_bc_multivariate_gaussian_robust_from_json():
+	model2 = from_json(model.to_json())
+
+	assert_true(isinstance(model2, BayesClassifier))
+	assert_true(isinstance(model2.distributions[0], MultivariateGaussianDistribution))
+	assert_true(isinstance(model2.distributions[1], MultivariateGaussianDistribution))
+	assert_array_almost_equal(model.weights, model2.weights)
+
+
+@with_setup(setup_multivariate_mixed, teardown)
+def test_bc_multivariate_mixed_robust_from_json():
+	model2 = from_json(model.to_json())
+
+	assert_true(isinstance(model2, BayesClassifier))
+	assert_true(isinstance(model2.distributions[0], MultivariateGaussianDistribution))
+	assert_true(isinstance(model2.distributions[1], IndependentComponentsDistribution))
+	assert_array_almost_equal(model.weights, model2.weights)
+
+
 @with_setup(setup_hmm, teardown)
 def test_model():
 	assert_almost_equal(hmm1.log_probability(list('H')), -0.2231435513142097 )
@@ -592,3 +617,92 @@ def test_hmm_prediction():
 	assert_equal(predicts[2], 1)
 	assert_equal(predicts[3], 1)
 	assert_equal(predicts[4], 2)
+
+@with_setup(setup_multivariate_gaussian, teardown)
+def test_io_log_probability():
+	X2 = DataGenerator(X)
+	X3 = DataFrameGenerator(pandas.DataFrame(X))
+
+	logp1 = model.log_probability(X)
+	logp2 = model.log_probability(X2)
+	logp3 = model.log_probability(X3)
+
+	assert_array_almost_equal(logp1, logp2)
+	assert_array_almost_equal(logp1, logp3)
+
+@with_setup(setup_multivariate_gaussian, teardown)
+def test_io_predict():
+	X2 = DataGenerator(X)
+	X3 = DataFrameGenerator(pandas.DataFrame(X))
+
+	y_hat1 = model.predict(X)
+	y_hat2 = model.predict(X2)
+	y_hat3 = model.predict(X3)
+
+	assert_array_almost_equal(y_hat1, y_hat2)
+	assert_array_almost_equal(y_hat1, y_hat3)
+
+@with_setup(setup_multivariate_gaussian, teardown)
+def test_io_predict_proba():
+	X2 = DataGenerator(X)
+	X3 = DataFrameGenerator(pandas.DataFrame(X))
+
+	y_hat1 = model.predict_proba(X)
+	y_hat2 = model.predict_proba(X2)
+	y_hat3 = model.predict_proba(X3)
+
+	assert_array_almost_equal(y_hat1, y_hat2)
+	assert_array_almost_equal(y_hat1, y_hat3)
+
+@with_setup(setup_multivariate_gaussian, teardown)
+def test_io_predict_log_proba():
+	X2 = DataGenerator(X)
+	X3 = DataFrameGenerator(pandas.DataFrame(X))
+
+	y_hat1 = model.predict_log_proba(X)
+	y_hat2 = model.predict_log_proba(X2)
+	y_hat3 = model.predict_log_proba(X3)
+
+	assert_array_almost_equal(y_hat1, y_hat2)
+	assert_array_almost_equal(y_hat1, y_hat3)
+
+def test_io_fit():
+	X = numpy.random.randn(100, 5) + 0.5
+	weights = numpy.abs(numpy.random.randn(100))
+	y = numpy.random.randint(2, size=100)
+	data_generator = DataGenerator(X, weights, y)
+
+	mu1 = numpy.array([0, 0, 0, 0, 0])
+	mu2 = numpy.array([1, 1, 1, 1, 1])
+	cov = numpy.eye(5)
+
+	d1 = MultivariateGaussianDistribution(mu1, cov)
+	d2 = MultivariateGaussianDistribution(mu2, cov)
+	bc1 = BayesClassifier([d1, d2])
+	bc1.fit(X, y, weights)
+
+	d1 = MultivariateGaussianDistribution(mu1, cov)
+	d2 = MultivariateGaussianDistribution(mu2, cov)
+	bc2 = BayesClassifier([d1, d2])
+	bc2.fit(data_generator)
+
+	logp1 = bc1.log_probability(X)
+	logp2 = bc2.log_probability(X)
+
+	assert_array_almost_equal(logp1, logp2)
+
+def test_io_from_samples():
+	X = numpy.random.randn(100, 5) + 0.5
+	weights = numpy.abs(numpy.random.randn(100))
+	y = numpy.random.randint(2, size=100)
+	data_generator = DataGenerator(X, weights, y)
+
+	d = MultivariateGaussianDistribution
+
+	bc1 = BayesClassifier.from_samples(d, X=X, y=y, weights=weights)
+	bc2 = BayesClassifier.from_samples(d, X=data_generator)
+
+	logp1 = bc1.log_probability(X)
+	logp2 = bc2.log_probability(X)
+
+	assert_array_almost_equal(logp1, logp2)

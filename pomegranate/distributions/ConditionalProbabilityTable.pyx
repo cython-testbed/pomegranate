@@ -12,6 +12,7 @@ from libc.math cimport exp as cexp
 from ..utils cimport _log
 from ..utils cimport isnan
 from ..utils import _check_nan
+from ..utils import check_random_state
 
 import itertools as it
 import json
@@ -56,9 +57,6 @@ cdef class ConditionalProbabilityTable(MultivariateDistribution):
 		for column in table[0]:
 			dtype = str(type(column)).split()[-1].strip('>').strip("'")
 			self.dtypes.append(dtype)
-
-		memset(self.counts, 0, self.n*sizeof(double))
-		memset(self.marginal_counts, 0, self.n*sizeof(double)/self.k)
 
 		self.idxs[0] = 1
 		self.idxs[1] = self.k
@@ -131,14 +129,17 @@ cdef class ConditionalProbabilityTable(MultivariateDistribution):
 
 		self.keymap = OrderedDict(keymap)
 
-	def sample(self, parent_values=None):
+	def sample(self, parent_values=None, n=None, random_state=None):
 		"""Return a random sample from the conditional probability table."""
+		random_state = check_random_state(random_state)
+
 		if parent_values is None:
 			parent_values = {}
 
 		for parent in self.parents:
 			if parent not in parent_values:
-				parent_values[parent] = parent.sample()
+				parent_values[parent] = parent.sample(
+					random_state=random_state)
 
 		sample_cands = []
 		sample_vals = []
@@ -151,8 +152,14 @@ cdef class ConditionalProbabilityTable(MultivariateDistribution):
 				sample_vals.append(cexp(self.values[ind]))
 
 		sample_vals /= numpy.sum(sample_vals)
-		sample_ind = numpy.where(numpy.random.multinomial(1, sample_vals))[0][0]
-		return sample_cands[sample_ind]
+		sample_ind = numpy.where(random_state.multinomial(1, sample_vals))[0][0]
+
+		if n is None:
+			return sample_cands[sample_ind]
+		else:
+			states = random_state.randint(1000000, size=n)
+			return [self.sample(parent_values, n=None, random_state=state)
+				for state in states]
 
 	def log_probability(self, X):
 		"""
@@ -160,31 +167,34 @@ cdef class ConditionalProbabilityTable(MultivariateDistribution):
 		ordering, like the training data.
 		"""
 
-		X = tuple(X)
+		X = numpy.array(X, ndmin=2, dtype=object)
 
-		for x in X:
-			if isinstance(x, str):
-				if x == 'nan':
-					return 0.0
-			elif x is None or numpy.isnan(x):
-				return 0.0
+		log_probabilities = numpy.zeros(X.shape[0])
+		for i, x in enumerate(X):
+			x = tuple(x)
 
-		idx = self.keymap[X]
-		return self.values[idx]
+			for x_ in x:
+				if _check_nan(x_):
+					break
+			else:
+				idx = self.keymap[x]
+				log_probabilities[i] = self.values[idx] 
+
+		if X.shape[0] == 1:
+			return log_probabilities[0]
+		return log_probabilities
 
 	cdef void _log_probability(self, double* X, double* log_probability, int n) nogil:
-		cdef int i, j, idx, is_na = 0
+		cdef int i, j, idx
 
 		for i in range(n):
-			idx, is_na = 0, 0
+			idx = 0
 			for j in range(self.m+1):
 				if isnan(X[self.m-j]):
-					is_na = 1
+					log_probability[i] = 0.
+					break
 
 				idx += self.idxs[j] * <int> X[self.m-j]
-
-			if is_na == 1:
-				log_probability[i] = 0.
 			else:
 				log_probability[i] = self.values[idx]
 
@@ -252,56 +262,45 @@ cdef class ConditionalProbabilityTable(MultivariateDistribution):
 		self.__summarize(items, weights)
 
 	cdef void __summarize(self, items, double [:] weights):
-		cdef int i, n = len(items), is_na
+		cdef int i, n = len(items)
 		cdef tuple item
 
 		for i in range(n):
-			is_na = 0
 			item = tuple(items[i])
 
 			for symbol in item:
 				if _check_nan(symbol):
-					is_na = 1
+					break
+			else:
+				key = self.keymap[item]
+				self.counts[key] += weights[i]
 
-			if is_na:
-				continue
-
-			key = self.keymap[item]
-			self.counts[key] += weights[i]
-
-			key = self.marginal_keymap[item[:-1]]
-			self.marginal_counts[key] += weights[i]
+				key = self.marginal_keymap[item[:-1]]
+				self.marginal_counts[key] += weights[i]
 
 	cdef double _summarize(self, double* items, double* weights, int n,
 		int column_idx, int d) nogil:
-		cdef int i, j, idx, k, is_na
+		cdef int i, j, idx, k
 		cdef double* counts = <double*> calloc(self.n, sizeof(double))
 		cdef double* marginal_counts = <double*> calloc(self.n / self.k, sizeof(double))
 
-		memset(counts, 0, self.n*sizeof(double))
-		memset(marginal_counts, 0, self.n / self.k * sizeof(double))
-
 		for i in range(n):
-			idx, is_na = 0, 0
+			idx = 0
 			for j in range(self.m+1):
 				k = i*self.n_columns + self.column_idxs_ptr[self.m-j]
 				if isnan(items[k]):
-					is_na = 1
-					continue
+					break
 
 				idx += self.idxs[j] * <int> items[k]
+			else:
+				counts[idx] += weights[i]
 
-			if is_na:
-				continue
+				idx = 0
+				for j in range(self.m):
+					k = i*self.n_columns + self.column_idxs_ptr[self.m-1-j]
+					idx += self.marginal_idxs[j] * <int> items[k]
 
-			counts[idx] += weights[i]
-
-			idx = 0
-			for j in range(self.m):
-				k = i*self.n_columns + self.column_idxs_ptr[self.m-1-j]
-				idx += self.marginal_idxs[j] * <int> items[k]
-
-			marginal_counts[idx] += weights[i]
+				marginal_counts[idx] += weights[i]
 
 		with gil:
 			for i in range(self.n / self.k):

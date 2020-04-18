@@ -13,10 +13,20 @@ from libc.string cimport memset
 
 from ..utils cimport _log
 from ..utils cimport isnan
+from ..utils cimport python_log_probability
+from ..utils cimport python_summarize
 
+from ..utils import check_random_state
 from ..utils import weight_set
 
 from .DiscreteDistribution import DiscreteDistribution
+
+
+cimport numpy
+numpy.import_array()
+
+cdef extern from "numpy/ndarraytypes.h":
+	void PyArray_ENABLEFLAGS(numpy.ndarray X, int flags)
 
 cdef class IndependentComponentsDistribution(MultivariateDistribution):
 	"""
@@ -50,6 +60,10 @@ cdef class IndependentComponentsDistribution(MultivariateDistribution):
 
 		self.d = len(distributions)
 		self.discrete = isinstance(distributions[0], DiscreteDistribution)
+		self.cython = 1
+		for dist in distributions:
+			if not isinstance(dist, Distribution) and not isinstance(dist, Model):
+				self.cython = 0
 
 		if weights is not None:
 			self.weights = numpy.array(weights, dtype=numpy.float64)
@@ -132,14 +146,21 @@ cdef class IndependentComponentsDistribution(MultivariateDistribution):
 
 		for i in range(n):
 			for j in range(self.d):
-				(<Model> self.distributions_ptr[j])._log_probability(X+i*self.d+j, &logp, 1)
+				if self.cython == 1:
+					(<Model> self.distributions_ptr[j])._log_probability(X+i*self.d+j, &logp, 1)
+				else:
+					with gil:
+						python_log_probability(self.distributions[j], X+i*self.d+j, &logp, 1)
+
 				log_probability[i] += logp * self.weights_ptr[j]
 
-	def sample(self, n=None):
+	def sample(self, n=None, random_state=None):
 		if n is None:
-			return numpy.array([d.sample() for d in self.parameters[0]])
+			return numpy.array([d.sample(random_state=random_state) 
+				for d in self.parameters[0]])
 		else:
-			return numpy.array([self.sample() for i in range(n)])
+			return numpy.array([d.sample(n, random_state=random_state)
+				for d in self.parameters[0]]).T.copy()
 
 	def fit(self, X, weights=None, inertia=0, pseudocount=0.0):
 		"""
@@ -173,9 +194,24 @@ cdef class IndependentComponentsDistribution(MultivariateDistribution):
 	cdef double _summarize(self, double* X, double* weights, int n,
 		int column_idx, int d) nogil:
 		cdef int i, j
+		cdef numpy.npy_intp dim = n * self.d
+		cdef numpy.npy_intp n_elements = n
 
-		for i in range(d):
-			(<Model> self.distributions_ptr[i])._summarize(X, weights, n, i, d)
+		if self.cython == 1:
+			for i in range(d):
+				(<Model> self.distributions_ptr[i])._summarize(X, weights, n, 
+					i, d)
+		else:
+			with gil:
+				X_ndarray = numpy.PyArray_SimpleNewFromData(1, &dim, 
+					numpy.NPY_FLOAT64, X)
+				X_ndarray = X_ndarray.reshape(n, self.d)
+
+				w_ndarray = numpy.PyArray_SimpleNewFromData(1, &n_elements, 
+					numpy.NPY_FLOAT64, weights)
+
+				for i in range(d):
+					self.distributions[i].summarize(X_ndarray[:,i], w_ndarray)
 
 	def from_summaries(self, inertia=0.0, pseudocount=0.0):
 		"""
